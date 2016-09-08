@@ -1,6 +1,8 @@
+import { popupAjaxError } from 'discourse/lib/ajax-error';
 import BufferedContent from 'discourse/mixins/buffered-content';
+import { propertyNotEqual } from 'discourse/lib/computed';
 
-export default Ember.ObjectController.extend(BufferedContent, {
+export default Ember.Controller.extend(BufferedContent, {
   needs: ['admin-badges'],
   saving: false,
   savingStatus: '',
@@ -11,8 +13,16 @@ export default Ember.ObjectController.extend(BufferedContent, {
   protectedSystemFields: Em.computed.alias('controllers.admin-badges.protectedSystemFields'),
 
   readOnly: Ember.computed.alias('buffered.system'),
-  showDisplayName: Discourse.computed.propertyNotEqual('name', 'displayName'),
-  canEditDescription: Em.computed.none('buffered.translatedDescription'),
+  showDisplayName: propertyNotEqual('name', 'displayName'),
+
+  hasQuery: function() {
+    const bQuery = this.get('buffered.query');
+    if (bQuery) {
+      return bQuery.trim().length > 0;
+    }
+    const mQuery = this.get('model.query');
+    return mQuery && mQuery.trim().length > 0;
+  }.property('model.query', 'buffered.query'),
 
   _resetSaving: function() {
     this.set('saving', false);
@@ -26,6 +36,7 @@ export default Ember.ObjectController.extend(BufferedContent, {
                      'listable', 'auto_revoke',
                      'enabled', 'show_posts',
                      'target_posts', 'name', 'description',
+                     'long_description',
                      'icon', 'image', 'query', 'badge_grouping_id',
                      'trigger', 'badge_type_id'],
             self = this;
@@ -57,18 +68,17 @@ export default Ember.ObjectController.extend(BufferedContent, {
             model = this.get('model');
         this.get('model').save(data).then(function() {
           if (newBadge) {
-            self.get('controllers.admin-badges').pushObject(model);
+            var adminBadgesController = self.get('controllers.admin-badges');
+            if (!adminBadgesController.contains(model)) adminBadgesController.pushObject(model);
             self.transitionToRoute('adminBadges.show', model.get('id'));
           } else {
             self.commitBuffer();
             self.set('savingStatus', I18n.t('saved'));
           }
 
-        }).catch(function(error) {
-          self.set('savingStatus', I18n.t('failed'));
-          self.send('saveError', error);
-        }).finally(function() {
+        }).catch(popupAjaxError).finally(function() {
           self.set('saving', false);
+          self.set('savingStatus', '');
         });
       }
     },

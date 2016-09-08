@@ -4,6 +4,8 @@ require_dependency 'guardian/post_guardian'
 require_dependency 'guardian/topic_guardian'
 require_dependency 'guardian/user_guardian'
 require_dependency 'guardian/post_revision_guardian'
+require_dependency 'guardian/group_guardian'
+require_dependency 'guardian/tag_guardian'
 
 # The guardian is responsible for confirming access to various site resources and operations
 class Guardian
@@ -13,6 +15,8 @@ class Guardian
   include TopicGuardian
   include UserGuardian
   include PostRevisionGuardian
+  include GroupGuardian
+  include TagGuardian
 
   class AnonymousUser
     def blank?; true; end
@@ -20,6 +24,8 @@ class Guardian
     def staff?; false; end
     def moderator?; false; end
     def approved?; false; end
+    def staged?; false; end
+    def blocked?; false; end
     def secure_category_ids; []; end
     def topic_create_allowed_category_ids; []; end
     def has_trust_level?(level); false; end
@@ -57,6 +63,10 @@ class Guardian
     @user.moderator?
   end
 
+  def is_blocked?
+    @user.blocked?
+  end
+
   def is_developer?
     @user &&
     is_admin? &&
@@ -64,8 +74,13 @@ class Guardian
       (
         Rails.configuration.respond_to?(:developer_emails) &&
         Rails.configuration.developer_emails.include?(@user.email)
-      )
+      ) ||
+      Developer.user_ids.include?(@user.id)
     )
+  end
+
+  def is_staged?
+    @user.staged?
   end
 
   # Can the user see the object?
@@ -107,18 +122,23 @@ class Guardian
   end
 
   def can_moderate?(obj)
-    obj && authenticated? && (is_staff? || (obj.is_a?(Topic) && @user.has_trust_level?(TrustLevel[4])))
+    obj && authenticated? && !is_blocked? && (is_staff? || (obj.is_a?(Topic) && @user.has_trust_level?(TrustLevel[4])))
   end
   alias :can_move_posts? :can_moderate?
   alias :can_see_flags? :can_moderate?
   alias :can_send_activation_email? :can_moderate?
+  alias :can_close? :can_moderate?
 
   def can_grant_badges?(_user)
     SiteSetting.enable_badges && is_staff?
   end
 
   def can_see_group?(group)
-    group.present? && (is_admin? || group.visible?)
+    return false if group.blank?
+    return true if is_admin? || group.visible?
+    return false if user.blank?
+
+    group.group_users.where(user_id: user.id).exists?
   end
 
 
@@ -197,6 +217,7 @@ class Guardian
 
   def can_invite_to_forum?(groups=nil)
     authenticated? &&
+    (SiteSetting.max_invites_per_day.to_i > 0 || is_staff?) &&
     !SiteSetting.enable_sso &&
     SiteSetting.enable_local_logins &&
     (
@@ -207,10 +228,20 @@ class Guardian
   end
 
   def can_invite_to?(object, group_ids=nil)
-    can_invite = can_see?(object) && can_invite_to_forum? && ( group_ids.blank? || is_admin? )
-    #TODO how should invite to PM work?
-    can_invite = can_invite && ( !object.category.read_restricted || is_admin? ) if object.is_a?(Topic) && object.category
-    can_invite
+    return false if ! authenticated?
+    return false unless (!SiteSetting.must_approve_users? || is_staff?)
+    return true if is_admin?
+    return false if (SiteSetting.max_invites_per_day.to_i == 0 && !is_staff?)
+    return false if ! can_see?(object)
+    return false if group_ids.present?
+
+    if object.is_a?(Topic) && object.category
+      if object.category.groups.any?
+        return true if object.category.groups.all? { |g| can_edit_group?(g) }
+      end
+    end
+
+    user.has_trust_level?(TrustLevel[2])
   end
 
   def can_bulk_invite_to_forum?(user)
@@ -225,6 +256,10 @@ class Guardian
     user.staff?
   end
 
+  def can_resend_all_invites?(user)
+    user.staff?
+  end
+
   def can_see_private_messages?(user_id)
     is_admin? || (authenticated? && @user.id == user_id)
   end
@@ -233,21 +268,29 @@ class Guardian
     (target.is_a?(Group) || target.is_a?(User)) &&
     # User is authenticated
     authenticated? &&
-    # Can't send message to yourself
-    is_not_me?(target) &&
     # Have to be a basic level at least
-    @user.has_trust_level?(TrustLevel[1]) &&
+    @user.has_trust_level?(SiteSetting.min_trust_to_send_messages) &&
     # PMs are enabled
     (SiteSetting.enable_private_messages ||
       @user.username == SiteSetting.site_contact_username ||
       @user == Discourse.system_user) &&
     # Can't send PMs to suspended users
-    (is_staff? || target.is_a?(Group) || !target.suspended?)
+    (is_staff? || target.is_a?(Group) || !target.suspended?) &&
+    # Blocked users can only send PM to staff
+    (!is_blocked? || target.staff?)
   end
 
   def can_see_emails?
     @can_see_emails
   end
+
+  def can_export_entity?(entity_type)
+    return false unless @user
+    return true if is_staff?
+    return false if entity_type == "admin"
+    UserExport.where(user_id: @user.id, created_at: (Time.zone.now.beginning_of_day..Time.zone.now.end_of_day)).count == 0
+  end
+
 
   private
 

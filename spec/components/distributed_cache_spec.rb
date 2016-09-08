@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'rails_helper'
 require 'distributed_cache'
 
 describe DistributedCache do
@@ -11,6 +11,35 @@ describe DistributedCache do
     DistributedCache.new("test")
   end
 
+  it 'allows us to store Set' do
+    c1 = DistributedCache.new("test1")
+    c2 = DistributedCache.new("test1")
+
+    set = Set.new
+    set << 1
+    set << "b"
+    set << 92803984
+    set << 93739739873973
+
+    c1["cats"] = set
+
+    wait_for do
+      c2["cats"] == set
+    end
+
+    expect(c2["cats"]).to eq(set)
+
+    set << 5
+
+    c2["cats"] == set
+
+    wait_for do
+      c1["cats"] == set
+    end
+
+    expect(c1["cats"]).to eq(set)
+  end
+
   it 'does not leak state across caches' do
     c2 = DistributedCache.new("test1")
     c3 = DistributedCache.new("test1")
@@ -20,18 +49,18 @@ describe DistributedCache do
     end
 
     Thread.pass
-    cache1["hi"].should == nil
+    expect(cache1["hi"]).to eq(nil)
 
   end
 
   it 'allows coerces symbol keys to strings' do
     cache1[:key] = "test"
-    cache1["key"].should == "test"
+    expect(cache1["key"]).to eq("test")
 
     wait_for do
       cache2[:key] == "test"
     end
-    cache2["key"].should == "test"
+    expect(cache2["key"]).to eq("test")
   end
 
   it 'sets other caches' do
@@ -49,7 +78,7 @@ describe DistributedCache do
     end
 
     cache1.delete("foo")
-    cache1["foo"].should == nil
+    expect(cache1["foo"]).to eq(nil)
 
     wait_for do
       cache2["foo"] == nil
@@ -64,7 +93,7 @@ describe DistributedCache do
     end
 
     cache1.clear
-    cache1["foo"].should == nil
+    expect(cache1["foo"]).to eq(nil)
     wait_for do
       cache2["boom"] == nil
     end

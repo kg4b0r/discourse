@@ -1,16 +1,22 @@
 # Available options:
 #
-# default - The default value of the setting.
-# client  - Set to true if the javascript should have access to this setting's value.
-# refresh - Set to true if clients should refresh when the setting is changed.
-# min     - For a string setting, the minimum length. For an integer setting, the minimum value.
-# max     - For a string setting, the maximum length. For an integer setting, the maximum value.
-# regex   - A regex that the value must match.
-# enum    - The setting has a fixed set of allowed values, and only one can be chosen.
-#           Set to the class name that defines the set.
+# default            - The default value of the setting.
+# client             - Set to true if the javascript should have access to this setting's value.
+# refresh            - Set to true if clients should refresh when the setting is changed.
+# min                - For a string setting, the minimum length. For an integer setting, the minimum value.
+# max                - For a string setting, the maximum length. For an integer setting, the maximum value.
+# regex              - A regex that the value must match.
+# validator          - The name of the class that will be use to validate the value of the setting.
+# enum               - The setting has a fixed set of allowed values, and only one can be chosen.
+#                      Set to the class name that defines the set.
+# shadowed_by_global - "Shadow" a site setting with a GlobalSetting. If the GlobalSetting
+#                      exists it will be used instead of the setting and the setting will be hidden.
+#                      Useful for things like API keys on multisite.
+#
 # type: email    - Must be a valid email address.
 # type: username - Must match the username of an existing user.
 # type: list     - A list of values, chosen from a set of valid values defined in the choices option.
+# type: enum     - A single value, chosen from a set of valid values in the choices option.
 #
 # A type:list setting with the word 'colors' in its name will make color values have a bold line of the corresponding color
 #
@@ -21,11 +27,16 @@ required:
   site_description:
     default: ''
   contact_email:
+    client: true
     default: ''
     type: email
+  contact_url:
+    client: true
+    default: ''
   notification_email:
-    default: 'info@unconfigured.discourse.org'
+    default: 'noreply@unconfigured.discourse.org'
     type: email
+    shadowed_by_global: true
   site_contact_username:
     default: ''
     type: username
@@ -36,7 +47,6 @@ required:
     client: true
     default: '/images/d-logo-sketch-small.png'
   digest_logo_url:
-    client: false
     default: ''
   mobile_logo_url:
     client: true
@@ -45,23 +55,36 @@ required:
     client: true
     default: '/images/default-favicon.ico'
   apple_touch_icon_url: '/images/default-apple-touch-icon.png'
+  default_opengraph_image_url: ''
+  exclude_rel_nofollow_domains:
+    default: ''
+    type: list
 
 basic:
   default_locale:
     default: 'en'
     enum: 'LocaleSiteSetting'
     refresh: true
+    shadowed_by_global: true
   allow_user_locale:
     client: true
     default: false
+  set_locale_from_accept_language_header:
+    default: false
+    validator: "AllowUserLocaleEnabledValidator"
+  categories_topics:
+    default: 20
+    min: 5
   suggested_topics:
     client: true
     default: 5
     min: 0
   limit_suggested_to_category:
-    client: false
     default: false
-  default_external_links_in_new_tab: false
+  suggested_topics_max_days_old:
+    default: 365
+    min: 7
+    max: 10000
   track_external_right_clicks:
     client: true
     default: false
@@ -78,25 +101,32 @@ basic:
   ga_domain_name:
     client: true
     default: ''
+  gtm_container_id:
+    client: true
+    default: ''
+    regex: "^GTM-"
   top_menu:
     client: true
     refresh: true
     type: list
-    default: 'latest|new|unread|starred|top|categories'
+    default: "latest|new|unread|top|categories"
+    regex: "latest"
+    regex_error: "site_settings.errors.must_include_latest"
     choices:
      - latest
      - new
      - unread
-     - starred
      - top
      - categories
      - read
      - posted
+     - bookmarks
   post_menu:
     client: true
     type: list
-    default: 'like|share|flag|edit|bookmark|delete|admin|reply'
+    default: 'like-count|like|share|flag|edit|bookmark|delete|admin|reply'
     choices:
+     - like-count
      - like
      - edit
      - flag
@@ -108,7 +138,7 @@ basic:
   post_menu_hidden_items:
     client: true
     type: list
-    default: 'bookmark|edit|delete|admin'
+    default: 'flag|bookmark|edit|delete|admin'
     choices:
      - like
      - edit
@@ -121,16 +151,29 @@ basic:
   share_links:
     client: true
     type: list
-    default: 'twitter|facebook|google+|email'
+    default: 'twitter|facebook|email'
     choices:
      - twitter
      - facebook
      - google+
      - email
+  desktop_category_page_style:
+    client: true
+    enum: 'CategoryPageStyle'
+    default: 'categories_and_latest_topics'
   category_colors:
     client: true
     type: list
     default: 'BF1E2E|F1592A|F7941D|9EB83B|3AB54A|12A89D|25AAE2|0E76BD|652D90|92278F|ED207B|8C6238|231F20|808281|B3B5B4|283890'
+  category_style:
+    client: true
+    default: 'bullet'
+    type: enum
+    choices:
+      - bar
+      - box
+      - bullet
+    preview: '<span class="badge-wrapper {{value}}"><span class="badge-category-parent-bg" style="background-color: #aaa;"></span><span class="badge-category-bg" style="background-color: #777;"></span><span style="color: #fff;" data-drop-close="true" class="badge-category clear-badge">Category</span></span>'
   enable_mobile_theme:
     client: true
     default: true
@@ -144,6 +187,16 @@ basic:
   topics_per_period_in_top_page:
     default: 50
     min: 1
+  top_page_default_timeframe:
+    default: 'yearly'
+    type: enum
+    choices:
+      - all
+      - yearly
+      - quarterly
+      - monthly
+      - weekly
+      - daily
   category_featured_topics:
     client: true
     default: 3
@@ -151,22 +204,30 @@ basic:
   fixed_category_positions:
     client: true
     default: false
-  topics_per_page:
-    default: 30
-    min: 1
+  fixed_category_positions_on_create:
     client: true
+    default: false
   show_subcategory_list:
     default: false
     client: true
   enable_badges:
     client: true
     default: true
+  enable_badge_sql:
+    client: true
+    default: false
+    hidden: true
+  enable_whispers:
+    client: true
+    default: false
 
 login:
   invite_only:
+    refresh: true
     client: true
     default: false
   login_required:
+    refresh: true
     client: true
     default: false
   must_approve_users:
@@ -178,11 +239,9 @@ login:
   allow_new_registrations:
     client: true
     default: true
-  # The default value of enable_google_logins changed from true to false.
-  # See db/migrate/20140521220115_google_openid_default_has_changed.rb
-  enable_google_logins:
+  enable_signup_cta:
     client: true
-    default: false
+    default: true
   enable_google_oauth2_logins:
     client: true
     default: false
@@ -196,10 +255,19 @@ login:
     default: false
   twitter_consumer_key:
     default: ''
-    regex: "^[a-zA-Z0-9_+-]*$"
+    regex: "^[\\w+-]+$"
   twitter_consumer_secret:
     default: ''
-    regex: "^[a-zA-Z0-9_+-]*$"
+    regex: "^[\\w+-]+$"
+  enable_instagram_logins:
+    client: true
+    default: false
+  instagram_consumer_key:
+    default: ''
+    regex: "^[a-z0-9]+$"
+  instagram_consumer_secret:
+    default: ''
+    regex: "^[a-z0-9]+$"
   enable_facebook_logins:
     client: true
     default: false
@@ -208,28 +276,33 @@ login:
     regex: "^\\d+$"
   facebook_app_secret:
     default: ''
-    regex: "^[a-f0-9]*$"
+    regex: "^[a-f0-9]+$"
   enable_github_logins:
     client: true
     default: false
   github_client_id:
     default: ''
-    regex: "^[a-f0-9]*$"
+    regex: "^[a-f0-9]+$"
   github_client_secret:
     default: ''
-    regex: "^[a-f0-9]*$"
+    regex: "^[a-f0-9]+$"
   enable_sso:
     client: true
     default: false
   enable_sso_provider: false
-  sso_url: ''
+  verbose_sso_logging: false
+  sso_url:
+    default: ''
+    regex: '^https?:\/\/.+[^\/]$'
   sso_secret: ''
+  sso_overrides_bio: false
   sso_overrides_email: false
   sso_overrides_username: false
   sso_overrides_name: false
   sso_overrides_avatar:
     default: false
     client: true
+  sso_not_approved_url: ''
   email_domains_blacklist:
     default: 'mailinator.com'
     type: list
@@ -237,6 +310,14 @@ login:
     default: ''
     type: list
   forgot_password_strict: false
+  log_out_strict: true
+  pending_users_reminder_delay:
+    min: -1
+    default: 8
+  maximum_session_age:
+    default: 1440
+    min: 1
+    max: 175200
 
 users:
   min_username_length:
@@ -248,9 +329,16 @@ users:
     default: 20
     min: 8
     max: 60
+  reserved_usernames:
+    type: list
+    default: "admin|moderator|administrator|mod|sys|system|community|info|you|name|username|user|nickname|discourse|discourseorg|discourseforum|support"
   min_password_length:
     client: true
-    default: 8
+    default: 10
+    min: 1
+  min_admin_password_length:
+    client: true
+    default: 15
     min: 1
   block_common_passwords: true
   enforce_global_nicknames:
@@ -260,11 +348,13 @@ users:
     default: ''
     hidden: true
   username_change_period: 3
-  auto_track_topics_after: 240000
   email_editable: true
   logout_redirect:
     client: true
     default: ''
+  full_name_required:
+    client: true
+    default: false
   enable_names:
     client: true
     default: true
@@ -283,15 +373,43 @@ users:
   show_email_on_profile:
     client: true
     default: false
-  email_token_valid_hours: 24
+  prioritize_username_in_ux:
+    client: true
+    default: true
+  email_token_valid_hours:
+    default: 48
+    min: 1
   email_token_grace_period_hours: 0
-  purge_unactivated_users_grace_period_days: 7
+  purge_unactivated_users_grace_period_days: 14
   public_user_custom_fields:
     type: list
     default: ''
+  staff_user_custom_fields:
+    type: list
+    default: ''
+  enable_user_directory:
+    client: true
+    default: true
+  allow_anonymous_posting:
+    default: false
+    client: true
+  anonymous_posting_min_trust_level:
+    default: 1
+    client: true
+  anonymous_account_duration_minutes:
+    default: 10080
+  hide_user_profiles_from_public:
+    default: false
+    client: true
 
 posting:
   min_post_length:
+    client: true
+    min: 1
+    default:
+      test: 5
+      default: 20
+  min_first_post_length:
     client: true
     min: 1
     default:
@@ -313,17 +431,19 @@ posting:
   max_topic_title_length:
     client: true
     default: 255
+    max: 255
   title_min_entropy: 10
+  allow_uppercase_posts: false
   title_prettify: true
   title_fancy_entities: true
   min_private_message_title_length:
     client: true
     default: 2
+    min: 1
   allow_uncategorized_topics:
     client: true
     default: true
     refresh: true
-  uncategorized_description: "Topics that don't need a category, or don't fit into any other existing category."
   allow_duplicate_topic_titles: false
   min_title_similar_length:
     client: true
@@ -331,9 +451,11 @@ posting:
   min_body_similar_length:
     client: true
     default: 15
-  enable_private_messages: true
-  ninja_edit_window: 300
-  post_edit_time_limit: 262800
+  enable_private_messages:
+    default: true
+    client: true
+  editing_grace_period: 300
+  post_edit_time_limit: 86400
   edit_history_visible_to_public:
     client: true
     default: true
@@ -342,6 +464,9 @@ posting:
     default: 24
     min: 0
   traditional_markdown_linebreaks:
+    client: true
+    default: false
+  allow_html_tables:
     client: true
     default: false
   suppress_reply_directly_below:
@@ -355,28 +480,32 @@ posting:
   max_reply_history:
     default: 1
     client: true
-  experimental_reply_expansion:
-    default: false
-    client: true
   post_undo_action_window_mins: 10
   max_mentions_per_post: 10
+  max_users_notified_per_group_mention: 100
   newuser_max_replies_per_topic: 3
   newuser_max_mentions_per_post: 2
-  max_word_length: 30
+  title_max_word_length: 30
   newuser_max_links: 2
   newuser_max_images:
     client: true
-    default: 0
+    default: 1
   newuser_max_attachments:
     client: true
     default: 0
-  uncategorized_category_id:
-    default: -1
-    hidden: true
   post_excerpt_maxlength: 300
+  show_pinned_excerpt_mobile:
+    client: true
+    default: true
+  show_pinned_excerpt_desktop:
+    client: true
+    default: true
   display_name_on_posts:
     client: true
     default: false
+  show_time_gap_days:
+    default: 7
+    client: true
   short_progress_text_threshold:
     client: true
     default: 10000
@@ -387,34 +516,85 @@ posting:
   autohighlight_all_code:
     client: true
     default: false
+  highlighted_languages:
+    default: 'apache|bash|cs|cpp|css|coffeescript|diff|xml|http|ini|json|java|javascript|makefile|markdown|nginx|objectivec|ruby|perl|php|python|sql|handlebars'
+    choices: 'HighlightJs.languages'
+    type: list
+    client: true
   delete_old_hidden_posts: true
   censored_words:
     client: true
     default: ''
     refresh: true
     type: list
+  enable_emoji:
+    default: true
+    client: true
+  emoji_set:
+    default: 'emoji_one'
+    client: true
+    enum: 'EmojiSetSiteSetting'
+  enforce_square_emoji:
+    default: true
+  approve_post_count:
+    default: 0
+  approve_unless_trust_level:
+    default: 0
+    enum: 'TrustLevelSetting'
+  notify_about_queued_posts_after:
+    default: 24
+    min: 0
+  auto_close_messages_post_count: 500
+  auto_close_topics_post_count: 10000
+  code_formatting_style:
+    client: true
+    type: enum
+    default: '4-spaces-indent'
+    choices:
+     - 4-spaces-indent
+     - code-fences
+  embed_truncate:
+    default: true
 
 email:
   email_time_window_mins:
     default: 10
     client: true
+  private_email_time_window_seconds: 20
   email_posts_context: 5
   digest_min_excerpt_length: 100
   digest_topics: 20
-  default_digest_email_frequency:
-    default: 7
-    enum: 'DigestEmailSiteSetting'
+  delete_digest_email_after_days: 365
+  digest_suppress_categories:
+    type: category_list
+    default: ''
+  disable_digest_emails:
+    default: false
+    client: true
   email_custom_headers: 'Auto-Submitted: auto-generated'
   email_subject: '[%{site_name}] %{optional_pm}%{optional_cat}%{topic_title}'
-  reply_by_email_enabled: false
-  reply_by_email_address: ''
-  pop3_polling_enabled: false
+  reply_by_email_enabled:
+    default: false
+    validator: "ReplyByEmailEnabledValidator"
+  reply_by_email_address:
+    default: ''
+  alternative_reply_by_email_addresses:
+    default: ''
+    validator: "AlternativeReplyByEmailAddressesValidator"
+  manual_polling_enabled:
+    default: false
+  pop3_polling_enabled:
+    default: false
+    validator: "POP3PollingEnabledSettingValidator"
   pop3_polling_ssl: true
   pop3_polling_period_mins: 5
   pop3_polling_host: ''
   pop3_polling_port: 995
   pop3_polling_username: ''
   pop3_polling_password: ''
+  log_mail_processing_failures: false
+  incoming_email_prefer_html:
+    default: false
   email_in:
     default: false
     client: true
@@ -423,10 +603,52 @@ email:
     enum: 'TrustLevelSetting'
   email_prefix: ''
   email_site_title: ''
-  disable_emails: false
+  disable_emails:
+    default: false
+    client: true
   strip_images_from_short_emails: true
   short_email_length: 2800
-  enable_email_names: true
+  display_name_on_email_from:
+    default: true
+  unsubscribe_via_email:
+    default: true
+  unsubscribe_via_email_footer:
+    default: false
+  delete_email_logs_after_days:
+    default: 365
+    min: 0
+  max_emails_per_day_per_user: 100
+  enable_staged_users: true
+  maximum_staged_users_per_email: 10
+  auto_generated_whitelist:
+    default: ''
+    type: list
+  block_auto_generated_emails: true
+  ignore_by_title:
+    type: list
+    default: ''
+  mailgun_api_key:
+    default: ''
+    regex: '^key-\h{32}$'
+  bounce_score_threshold:
+    client: true
+    default: 4
+    min: 1
+  bounce_score_threshold_deactivate: 30
+  soft_bounce_score:
+    default: 1
+    min: 1
+  hard_bounce_score:
+    default: 2
+    min: 2
+  reset_bounce_score_after_days: 30
+  attachment_content_type_blacklist:
+    type: list
+    default: "pkcs7"
+  attachment_filename_blacklist:
+    type: list
+    default: "smime.p7s|signature.asc"
+
 
 files:
   max_image_size_kb:
@@ -434,7 +656,7 @@ files:
     default: 3072
   max_attachment_size_kb:
     client: true
-    default: 1024
+    default: 3072
   authorized_extensions:
     client: true
     default: 'jpg|jpeg|png|gif'
@@ -454,27 +676,36 @@ files:
     default:
       test: false
       default: true
-  download_remote_images_threshold: 20
+  download_remote_images_threshold: 10
+  download_remote_images_max_days_old:
+    default: 30
+    min: 1
+    max: 10000
   disabled_image_download_domains:
     type: list
     default: ''
   create_thumbnails: true
-  clean_up_uploads: false
-  clean_orphan_uploads_grace_period_hours: 1
+  clean_up_uploads: true
+  clean_orphan_uploads_grace_period_hours: 48
   purge_deleted_uploads_grace_period_days: 30
   prevent_anons_from_downloading_files:
     default: false
     client: true
-  enable_s3_uploads: false
+  enable_s3_uploads:
+    default: false
+    client: true
   s3_use_iam_profile: false
   s3_access_key_id: ''
   s3_secret_access_key: ''
   s3_region:
-    default: ''
+    default: 'us-east-1'
     enum: 'S3RegionSiteSetting'
   s3_upload_bucket:
     default: ''
-    regex: "^[^\\.]*$"
+    regex: '^[a-z0-9\-\/]+$' # can't use '.' when using HTTPS
+  s3_cdn_url:
+    default: ''
+    regex: '^https?:\/\/.+[^\/]$'
   allow_profile_backgrounds:
     client: true
     default: true
@@ -485,7 +716,29 @@ files:
   allow_animated_avatars:
     client: true
     default: false
-  allow_animated_thumbnails: false
+  allow_animated_thumbnails: true
+  default_avatars:
+    default: ''
+    type: url_list
+    client: true
+  avatar_sizes:
+    default: '20|25|32|45|60|120'
+    type: list
+  external_system_avatars_enabled:
+    default: true
+    client: true
+    shadowed_by_global: true
+  external_system_avatars_url:
+    default: "/letter_avatar_proxy/v2/letter/{first_letter}/{color}/{size}.png"
+    client: true
+    regex: '^((https?:)?\/)?\/.+[^\/]'
+    shadowed_by_global: true
+  allow_all_attachments_for_group_messages: false
+  convert_pasted_images_to_hq_jpg: true
+  convert_pasted_images_quality:
+    default: 95
+    min: 1
+    max: 100
 
 trust:
   default_trust_level:
@@ -500,6 +753,12 @@ trust:
   min_trust_to_edit_wiki_post:
     default: 1
     enum: 'TrustLevelSetting'
+  min_trust_to_allow_self_wiki:
+    default: 3
+    enum: 'TrustLevelSetting'
+  min_trust_to_send_messages:
+    default: 1
+    enum: 'TrustLevelSetting'
   tl1_requires_topics_entered: 5
   tl1_requires_read_posts:
     default: 30
@@ -512,10 +771,13 @@ trust:
   tl2_requires_likes_received: 1
   tl2_requires_likes_given: 1
   tl2_requires_topic_reply_count: 3
+  tl3_time_period:
+    default: 100
+    min: 1
+    max: 1000000
   tl3_requires_days_visited:
     default: 50
     min: 0
-    max: 100
   tl3_requires_topics_replied_to:
     default: 10
     min: 0
@@ -523,10 +785,16 @@ trust:
     default: 25
     min: 0
     max: 100
+  tl3_requires_topics_viewed_cap:
+    default: 500
+    min: 0
   tl3_requires_posts_read:
     default: 25
     min: 0
     max: 100
+  tl3_requires_posts_read_cap:
+    default: 20000
+    min: 0
   tl3_requires_topics_viewed_all_time:
     default: 200
     min: 0
@@ -539,16 +807,21 @@ trust:
   tl3_promotion_min_duration:
     default: 14
     min: 0
+    max: 20000
   tl3_requires_likes_given:
     default: 30
     min: 0
   tl3_requires_likes_received:
     default: 20
     min: 0
-  tl3_links_no_follow: false
+  tl3_links_no_follow:
+    default: false
+    client: true
 
 security:
-  use_https: false
+  force_https:
+    default: false
+    shadowed_by_global: true
   enable_escaped_fragments: true
   allow_index_in_robots_txt: true
   enable_noscript_support: true
@@ -556,6 +829,9 @@ security:
   cors_origins:
     default: ''
     type: list
+  use_admin_ip_whitelist:
+    default: false
+    client: true
 
 onebox:
   enable_flash_video_onebox: false
@@ -566,15 +842,14 @@ onebox:
 
 spam:
   add_rel_nofollow_to_user_content: true
-  exclude_rel_nofollow_domains:
-    default: ''
-    type: list
   flags_required_to_hide_post: 3
   cooldown_minutes_after_hiding_posts: 10
-  num_flags_to_block_new_user: 3
+  num_spam_flags_to_block_new_user: 3
   num_users_to_block_new_user: 3
+  num_tl3_flags_to_block_new_user: 6
+  num_tl3_users_to_block_new_user: 4
   notify_mods_when_user_blocked: false
-  flag_sockpuppets: true
+  flag_sockpuppets: false
   newuser_spam_host_threshold: 3
   white_listed_spam_host_domains:
     default: ''
@@ -587,6 +862,13 @@ spam:
   min_ban_entries_for_roll_up: 5
   max_age_unmatched_emails: 365
   max_age_unmatched_ips: 365
+  num_flaggers_to_close_topic: 5
+  num_flags_to_close_topic: 12
+  auto_respond_to_flag_actions: true
+  min_first_post_typing_time: 3000
+  auto_block_fast_typers_on_first_post: true
+  auto_block_fast_typers_max_trust_level: 0
+  auto_block_first_post_regex: ""
 
 rate_limits:
   unique_posts_mins:
@@ -595,7 +877,7 @@ rate_limits:
       default: 5
   rate_limit_create_topic: 15
   rate_limit_create_post: 5
-  rate_limit_new_user_create_topic: 60
+  rate_limit_new_user_create_topic: 120
   rate_limit_new_user_create_post: 30
   max_topics_per_day: 20
   max_private_messages_per_day: 20
@@ -603,9 +885,21 @@ rate_limits:
   max_bookmarks_per_day: 20
   max_flags_per_day: 20
   max_edits_per_day: 30
-  max_stars_per_day: 20
-  max_topics_in_first_day: 5
+  max_invites_per_day: 10
+  max_topic_invitations_per_day: 30
+  max_topics_in_first_day: 3
   max_replies_in_first_day: 10
+  tl2_additional_likes_per_day_multiplier: 1.5
+  tl3_additional_likes_per_day_multiplier: 2
+  tl4_additional_likes_per_day_multiplier: 3
+  alert_admins_if_errors_per_minute:
+    client: true
+    shadowed_by_global: true
+    default: 0
+  alert_admins_if_errors_per_hour:
+    client: true
+    shadowed_by_global: true
+    default: 0
 
 developer:
   force_hostname:
@@ -645,29 +939,60 @@ developer:
     default: 15000
   flush_timings_secs:
     client: true
-    default: 10
+    default: 20
   active_user_rate_limit_secs: 60
   verbose_localization:
     default: false
     client: true
-  posts_chunksize:
-    client: true
-    default: 20
+  top_topics_formula_log_views_multiplier:
+    default: 2
+    min: 0
+  top_topics_formula_first_post_likes_multiplier:
+    default: 0.5
+    min: 0
+  top_topics_formula_least_likes_per_post_multiplier:
+    default: 3
+    min: 0
+  rebake_old_posts_count:
+    default: 250
     min: 1
+  migrate_to_new_scheme:
+    hidden: true
+    default: false
+  max_new_topics:
+    default: 500
+    client: true
+    hidden: true
 
 embedding:
-  embeddable_host: ''
-  feed_polling_enabled: false
-  feed_polling_url: ''
+  feed_polling_enabled:
+    default: false
+    hidden: true
+  feed_polling_url:
+    default: ''
+    hidden: true
   embed_by_username:
     default: ''
     type: username
-  embed_username_key_from_feed: ''
-  embed_category: ''
-  embed_post_limit: 100
-  embed_truncate: false
-  embed_whitelist_selector: ''
-  embed_blacklist_selector: ''
+    hidden: true
+  embed_username_key_from_feed:
+    default: ''
+    hidden: true
+  embed_post_limit:
+    default: 100
+    hidden: true
+  embed_title_scrubber:
+    default: ''
+    hidden: true
+  embed_whitelist_selector:
+    default: ''
+    hidden: true
+  embed_blacklist_selector:
+    default: ''
+    hidden: true
+  embed_classname_whitelist:
+    default: 'emoji'
+    hidden: true
 
 legal:
   tos_url:
@@ -681,22 +1006,44 @@ legal:
     default: ''
 
 backups:
+  readonly_mode_during_backup:
+    default: true
   allow_restore:
-    client: false
     default: false
   maximum_backups:
     client: true
+    default: 5
+    shadowed_by_global: true
+  automatic_backups_enabled:
+    default: true
+    shadowed_by_global: true
+  backup_frequency:
+    min: 1
+    max: 30
     default: 7
-  backup_daily:
-    client: false
-    default: false
+    shadowed_by_global: true
   enable_s3_backups:
-    client: false
     default: false
+    shadowed_by_global: true
   s3_backup_bucket:
-    client: false
     default: ''
-    regex: "^[^\\.]*$"
+    regex: '^[a-z0-9\-\/]+$' # can't use '.' when using HTTPS
+    shadowed_by_global: true
+  s3_disable_cleanup:
+    default: false
+  backup_time_of_day:
+    default: '3:30'
+    regex: "^((0?(0|1|2|3|4|5|6|7|8|9)|(10|11|12|13|14|15|16|17|18|19|20|21|22|23))):\\d\\d$"
+  backup_with_uploads: true
+
+search:
+  min_search_term_length:
+    client: true
+    default: 3
+
+  search_tokenize_chinese_japanese_korean: false
+  search_prefer_recent_posts: false
+  search_recent_posts_size: 100000
 
 uncategorized:
   version_checks:
@@ -709,16 +1056,21 @@ uncategorized:
     client: true
     default: true
 
-  # Search
-  min_search_term_length:
-    client: true
-    default: 3
-  max_similar_results: 7
+  slug_generation_method:
+    default: 'ascii'
+    enum: 'SlugSetting'
+
+  permalink_normalizations:
+    default: ''
+    type: list
+
+  max_similar_results: 5
   minimum_topics_similar: 50
 
-  new_topic_duration_minutes: 2880
   previous_visit_timeout_hours: 1
   staff_like_weight: 3
+  topic_view_duration_hours: 8
+  user_profile_view_duration_hours: 8
 
   # Summary mode
   summary_score_threshold: 15
@@ -766,21 +1118,28 @@ uncategorized:
     default: 14
   cold_age_days_medium:
     client: true
-    default: 60
+    default: 90
   cold_age_days_high:
     client: true
-    default: 120
+    default: 180
 
   # Warnings
   educate_until_posts: 2
   sequential_replies_threshold: 2
   dominating_topic_minimum_percent: 20
+  disable_avatar_education_message: false
 
   global_notice:
     default: ""
     client: true
   has_login_hint:
     default: false
+    hidden: true
+
+  # Nothing past this threshold is ever considered new
+  # this is calculated dynamically every 15 minutes
+  min_new_topics_time:
+    default: 0
     hidden: true
 
   # Category IDs
@@ -791,6 +1150,9 @@ uncategorized:
     default: -1
     hidden: true
   staff_category_id:
+    default: -1
+    hidden: true
+  uncategorized_category_id:
     default: -1
     hidden: true
 
@@ -808,10 +1170,12 @@ uncategorized:
 
   disable_edit_notifications: false
 
-  vacuum_db_days: 90
+  vacuum_db_days: 9000
   last_vacuum:
     default: 0
     hidden: true
+
+  delete_drafts_older_than_n_days: 180
 
   tos_topic_id:
     default: -1
@@ -822,3 +1186,151 @@ uncategorized:
   privacy_topic_id:
     default: -1
     hidden: true
+
+  bootstrap_mode_min_users:
+    default: 50
+    client: true
+    min: 0
+    max: 5000
+
+  bootstrap_mode_enabled:
+    default: false
+    client: true
+    hidden: true
+
+  automatically_unpin_topics:
+    default: true
+    client: true
+
+  read_time_word_count:
+    default: 500
+    client: true
+
+  topic_page_title_includes_category: true
+
+user_preferences:
+  default_email_digest_frequency:
+    enum: 'DigestEmailSiteSetting'
+    default: 10080
+  default_include_tl0_in_digests: false
+  default_email_private_messages: true
+  default_email_direct: true
+  default_email_mailing_list_mode: false
+  default_email_mailing_list_mode_frequency:
+    enum: 'MailingListModeSiteSetting'
+    default: 0
+  disable_mailing_list_mode:
+    default: false
+    client: true
+  default_email_always: false
+  default_email_previous_replies:
+    enum: 'PreviousRepliesSiteSetting'
+    default: 2
+  default_email_in_reply_to:
+    default: true
+
+  default_other_new_topic_duration_minutes:
+    enum: 'NewTopicDurationSiteSetting'
+    default: 2880
+  default_other_auto_track_topics_after_msecs:
+    enum: 'AutoTrackDurationSiteSetting'
+    default: 240000
+  default_other_external_links_in_new_tab: false
+  default_other_enable_quoting: true
+  default_other_dynamic_favicon: false
+  default_other_disable_jump_reply: false
+  default_other_like_notification_frequency:
+    enum: 'LikeNotificationFrequencySiteSetting'
+    default: 1
+
+  default_topics_automatic_unpin:
+    default: true
+    client: true
+
+  default_categories_watching:
+    type: category_list
+    default: ''
+  default_categories_tracking:
+    type: category_list
+    default: ''
+  default_categories_muted:
+    type: category_list
+    default: ''
+
+user_api:
+  max_user_api_reqs_per_day:
+    default: 2880
+  max_user_api_reqs_per_minute:
+    default: 12
+  allow_read_user_api_keys:
+    default: true
+  allow_write_user_api_keys:
+    default: false
+  allow_push_user_api_keys:
+    default: true
+  max_api_keys_per_user:
+    default: 10
+  push_api_secret_key:
+    hidden: true
+  min_trust_level_for_user_api_key:
+    default: 1
+  allowed_user_api_push_urls:
+    default: ''
+    type: list
+    shadowed_by_global: true
+  allowed_user_api_auth_redirects:
+    default: 'https://api.discourse.org/api/auth_redirect|discourse://auth_redirect'
+    type: list
+
+tags:
+  tagging_enabled:
+    client: true
+    default: false
+    refresh: true
+  tag_style:
+    client: true
+    type: enum
+    default: 'simple'
+    choices:
+     - simple
+     - bullet
+     - box
+    preview: '<div class="discourse-tags"><span class="discourse-tag {{value}}">tag1</span><span class="discourse-tag {{value}}">tag2</span></div>'
+  max_tags_per_topic:
+    default: 5
+    client: true
+  max_tag_length:
+    default: 20
+    client: true
+  min_trust_to_create_tag:
+    default: 3
+    enum: 'TrustLevelSetting'
+  min_trust_level_to_tag_topics:
+    default: 0
+    enum: 'TrustLevelSetting'
+    client: true
+  max_tag_search_results:
+    client: true
+    default: 5
+    min: 1
+  show_filter_by_tag:
+    client: true
+    default: false
+    refresh: true
+  max_tags_in_filter_list:
+    default: 30
+    min: 1
+    refresh: true
+  tags_sort_alphabetically:
+    client: true
+    default: false
+    refresh: true
+  staff_tags:
+    type: list
+    client: true
+    default: ''
+  suppress_overlapping_tags_in_list:
+    default: false
+    client: true
+  remove_muted_tags_from_latest:
+    default: false

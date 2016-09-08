@@ -1,0 +1,38 @@
+# encoding: utf-8
+#
+# Never edit this file. It will be overwritten when translations are pulled from Transifex.
+#
+# To work with us on translations, join this project:
+# https://www.transifex.com/projects/p/discourse-org/
+
+ro:
+  js:
+    poll:
+      voters:
+        one: "participant"
+        few: "participanți"
+        other: "participanți"
+      total_votes:
+        one: "un vot"
+        few: "total voturi"
+        other: "total voturi"
+      average_rating: "Media: <strong>%{average}</strong>."
+      public:
+        title: "Voturile sunt publice."
+      cast-votes:
+        title: "Exprimă-ți votul"
+        label: "Votează acum!"
+      show-results:
+        title: "Afişează rezultatele sondajului"
+        label: "Afișează rezultate"
+      hide-results:
+        title: "Înapoi la voturile tale"
+        label: "Ascunde rezultate"
+      open:
+        title: "Deschide sondajul"
+        label: "Deschide sondajul"
+        confirm: "Ești sigur că vrei să deschizi acest sondaj?"
+      close:
+        title: "Închide sondajul"
+        label: "Închide sondajul"
+        confirm: "Sunteţi sigur că vreţi să închideţi acest sondaj?"

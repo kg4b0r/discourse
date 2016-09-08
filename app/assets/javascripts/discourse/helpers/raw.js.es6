@@ -1,20 +1,28 @@
-Handlebars.registerHelper('raw', function(property, options) {
-  var templateName = property + ".raw",
-      template = Discourse.__container__.lookup('template:' + templateName),
-      params = options.hash;
+import { registerUnbound } from 'discourse/lib/helpers';
 
-  if (!template) {
-    Ember.warn('Could not find raw template: ' + templateName);
-    return;
-  }
+// see: https://github.com/emberjs/ember.js/issues/12634
+var missingViews = {};
 
-  if (params) {
-    for (var prop in params) {
-      if (options.hashTypes[prop] === "ID") {
-        params[prop] = Ember.Handlebars.get(this, params[prop], options);
-      }
+function renderRaw(ctx, template, templateName, params) {
+  params.parent = params.parent || ctx;
+
+  if (!params.view && !missingViews[templateName]) {
+    var viewClass = Discourse.__container__.lookupFactory('view:' + templateName);
+    if (viewClass) {
+      params.view = viewClass.create(params);
+    } else {
+      missingViews[templateName] = true;
     }
   }
 
   return new Handlebars.SafeString(template(params));
+}
+
+registerUnbound('raw', function(templateName, params) {
+  var template = Discourse.__container__.lookup('template:' + templateName + '.raw');
+  if (!template) {
+    Ember.warn('Could not find raw template: ' + templateName);
+    return;
+  }
+  return renderRaw(this, template, templateName, params);
 });

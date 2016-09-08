@@ -17,7 +17,6 @@
   width: 100%;
   height: auto;
   background-color: $secondary;
-  border: 1px solid scale-color($secondary, $lightness: 90%);
   border: 1px solid rgba(0, 0, 0, 0.3);
 
   @include border-radius-all (6px);
@@ -49,8 +48,6 @@
   margin-left: -1px;
 }
 
-.modal-footer span.hint { display: none; }
-
 .modal-header {
   // we need tighter spacing on mobile for header
   // this clearfix under the modal title h3 pushes it way down
@@ -58,14 +55,14 @@
     display:none;
   }
   h3 {
-    font-size: 18px;
+    font-size: 1.286em;
     padding-left: 15px;
     margin-bottom: 5px;
   }
 }
 .close {
   float: right;
-  font-size: 24px;
+  font-size: 1.714em;
   padding: 10px 15px 5px 5px;
   margin: -15px 0 0 0;
   color: $primary;
@@ -89,8 +86,13 @@
   form {
     margin-top: 20px;
     input[type=text] {
-      width: 500px;
+      box-sizing: border-box;
+      width: 100%;
     }
+  }
+
+  .category-combobox {
+    width: 100%;
   }
 }
 
@@ -100,7 +102,7 @@
 
 .custom-message-length {
   margin: -10px 0 10px 20px;
-  color: scale-color($primary, $lightness: 70%);
+  color: dark-light-choose(scale-color($primary, $lightness: 30%), scale-color($secondary, $lightness: 70%));
   font-size: 85%;
 }
 
@@ -168,14 +170,27 @@
 }
 
 #search-help {
-  max-width: 300px;
+  max-width: 98%;
 }
 
-#search-help h2 {
-  margin: 0;
-  font-size: 12px;
+// this makes the table behave like a flat list
+#search-help td {
+  display: block;
+  padding-left: 10px;
+}
+
+#search-help h3 {
+  display: none;
 }
 
 #search-help p {
- margin: 5px;
+  margin: 10px;
+}
+
+#search-help .btn-primary {
+  float: none;
+}
+
+#google-search form {
+  padding-left: 10px;
 }

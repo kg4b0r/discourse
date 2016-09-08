@@ -1,20 +1,58 @@
-/* global asyncTest */
+/* global asyncTest, fixtures */
 
-import siteFixtures from 'fixtures/site_fixtures';
+import sessionFixtures from 'fixtures/session-fixtures';
+import siteFixtures from 'fixtures/site-fixtures';
+import HeaderComponent from 'discourse/components/site-header';
+import { forceMobile, resetMobile } from 'discourse/lib/mobile';
 
-export function integration(name, options) {
-  module("Integration: " + name, {
-    setup: function() {
-      Ember.run(Discourse, Discourse.advanceReadiness);
+function currentUser() {
+  return Discourse.User.create(sessionFixtures['/session/current.json'].current_user);
+}
 
-      var siteJson = siteFixtures['site.json'].site;
+function logIn() {
+  Discourse.User.resetCurrent(currentUser());
+}
+
+const Plugin = $.fn.modal;
+const Modal = Plugin.Constructor;
+
+function AcceptanceModal(option, _relatedTarget) {
+  return this.each(function () {
+    var $this   = $(this);
+    var data    = $this.data('bs.modal');
+    var options = $.extend({}, Modal.DEFAULTS, $this.data(), typeof option === 'object' && option);
+
+    if (!data) $this.data('bs.modal', (data = new Modal(this, options)));
+    data.$body = $('#ember-testing');
+
+    if (typeof option === 'string') data[option](_relatedTarget);
+    else if (options.show) data.show(_relatedTarget);
+  });
+}
+
+window.bootbox.$body = $('#ember-testing');
+$.fn.modal = AcceptanceModal;
+
+function acceptance(name, options) {
+  module("Acceptance: " + name, {
+    setup() {
+      resetMobile();
+
+      // For now don't do scrolling stuff in Test Mode
+      HeaderComponent.reopen({examineDockHeader: Ember.K});
+
+      const siteJson = siteFixtures['site.json'].site;
       if (options) {
         if (options.setup) {
           options.setup.call(this);
         }
 
-        if (options.user) {
-          Discourse.User.resetCurrent(Discourse.User.create(options.user));
+        if (options.mobileView) {
+          forceMobile();
+        }
+
+        if (options.loggedIn) {
+          logIn();
         }
 
         if (options.settings) {
@@ -29,23 +67,25 @@ export function integration(name, options) {
       Discourse.reset();
     },
 
-    teardown: function() {
+    teardown() {
       if (options && options.teardown) {
         options.teardown.call(this);
       }
+      Discourse.User.resetCurrent();
+      Discourse.Site.resetCurrent(Discourse.Site.create(jQuery.extend(true, {}, fixtures['site.json'].site)));
 
       Discourse.reset();
     }
   });
 }
 
-export function controllerFor(controller, model) {
+function controllerFor(controller, model) {
   controller = Discourse.__container__.lookup('controller:' + controller);
   if (model) { controller.set('model', model ); }
   return controller;
 }
 
-export function asyncTestDiscourse(text, func) {
+function asyncTestDiscourse(text, func) {
   asyncTest(text, function () {
     var self = this;
     Ember.run(function () {
@@ -54,9 +94,26 @@ export function asyncTestDiscourse(text, func) {
   });
 }
 
-export function fixture(selector) {
+function fixture(selector) {
   if (selector) {
     return $("#qunit-fixture").find(selector);
   }
   return $("#qunit-fixture");
 }
+
+function present(obj, text) {
+  ok(!Ember.isEmpty(obj), text);
+}
+
+function blank(obj, text) {
+  ok(Ember.isEmpty(obj), text);
+}
+
+export { acceptance,
+         controllerFor,
+         asyncTestDiscourse,
+         fixture,
+         logIn,
+         currentUser,
+         blank,
+         present };

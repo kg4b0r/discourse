@@ -1,6 +1,14 @@
+require_dependency "distributed_memoizer"
+
 class TopTopic < ActiveRecord::Base
 
   belongs_to :topic
+
+  def self.topics_per_period(period)
+    DistributedMemoizer.memoize("#{Discourse.current_hostname}_topics_per_period_#{period}", 1.day) do
+      TopTopic.where("#{period}_score > 0").count
+    end.to_i
+  end
 
   # The top topics we want to refresh often
   def self.refresh_daily!
@@ -14,13 +22,15 @@ class TopTopic < ActiveRecord::Base
 
   # We don't have to refresh these as often
   def self.refresh_older!
-    older_periods = periods - [:daily]
+    older_periods = periods - [:daily,:all]
 
     transaction do
       older_periods.each do |period|
         update_counts_and_compute_scores_for(period)
       end
     end
+
+    compute_top_score_for(:all)
   end
 
   def self.refresh!
@@ -30,11 +40,20 @@ class TopTopic < ActiveRecord::Base
 
 
   def self.periods
-    @@periods ||= [:yearly, :monthly, :weekly, :daily].freeze
+    @@periods ||= [:all, :yearly, :quarterly, :monthly, :weekly, :daily].freeze
+  end
+
+  def self.sorted_periods
+    ascending_periods ||= Enum.new(daily: 1,
+                                   weekly: 2,
+                                   monthly: 3,
+                                   quarterly: 4,
+                                   yearly: 5,
+                                   all: 6)
   end
 
   def self.sort_orders
-    @@sort_orders ||= [:posts, :views, :likes].freeze
+    @@sort_orders ||= [:posts, :views, :likes, :op_likes].freeze
   end
 
   def self.update_counts_and_compute_scores_for(period)
@@ -103,7 +122,7 @@ class TopTopic < ActiveRecord::Base
   end
 
   def self.update_likes_count_for(period)
-    sql = "SELECT topic_id, GREATEST(SUM(like_count), 1) AS count
+    sql = "SELECT topic_id, SUM(like_count) AS count
              FROM posts
              WHERE created_at >= :from
                AND deleted_at IS NULL
@@ -114,16 +133,67 @@ class TopTopic < ActiveRecord::Base
     update_top_topics(period, "likes", sql)
   end
 
+  def self.update_op_likes_count_for(period)
+    sql = "SELECT topic_id, like_count AS count
+             FROM posts
+             WHERE created_at >= :from
+               AND post_number = 1
+               AND deleted_at IS NULL
+               AND NOT hidden
+               AND post_type = #{Post.types[:regular]}"
+
+    update_top_topics(period, "op_likes", sql)
+  end
+
   def self.compute_top_score_for(period)
+
+    log_views_multiplier = SiteSetting.top_topics_formula_log_views_multiplier.to_f
+    log_views_multiplier = 2 if log_views_multiplier == 0
+
+    first_post_likes_multiplier = SiteSetting.top_topics_formula_first_post_likes_multiplier.to_f
+    first_post_likes_multiplier = 0.5 if first_post_likes_multiplier == 0
+
+    least_likes_per_post_multiplier = SiteSetting.top_topics_formula_least_likes_per_post_multiplier.to_f
+    least_likes_per_post_multiplier = 3 if least_likes_per_post_multiplier == 0
+
+    if period == :all
+      top_topics = "(
+        SELECT t.like_count all_likes_count,
+               t.id topic_id,
+               t.posts_count all_posts_count,
+               p.like_count all_op_likes_count,
+               t.views all_views_count
+        FROM topics t
+        JOIN posts p ON p.topic_id = t.id AND p.post_number = 1
+      ) as top_topics"
+      time_filter = "false"
+    else
+      top_topics = "top_topics"
+      time_filter = "topics.created_at < :from"
+    end
+
     sql = <<-SQL
         WITH top AS (
           SELECT CASE
-                   WHEN topics.created_at < :from THEN 0
-                   ELSE log(greatest(#{period}_views_count, 1)) + #{period}_likes_count * 2 + #{period}_posts_count * 2
+                   WHEN #{time_filter} THEN 0
+                   ELSE log(GREATEST(#{period}_views_count, 1)) * #{log_views_multiplier} +
+                        #{period}_op_likes_count * #{first_post_likes_multiplier} +
+                        CASE WHEN #{period}_likes_count > 0 AND #{period}_posts_count > 0
+                           THEN
+                            LEAST(#{period}_likes_count / #{period}_posts_count, #{least_likes_per_post_multiplier})
+                           ELSE 0
+                        END +
+                        CASE WHEN topics.posts_count < 10 THEN
+                           0 - ((10 - topics.posts_count) / 20) * #{period}_op_likes_count
+                        ELSE
+                           10
+                        END +
+                        log(GREATEST(#{period}_posts_count, 1))
                  END AS score,
                  topic_id
-          FROM top_topics
-          LEFT JOIN topics ON topics.id = top_topics.topic_id
+          FROM #{top_topics}
+          LEFT JOIN topics ON topics.id = top_topics.topic_id AND
+                              topics.deleted_at IS NULL
         )
         UPDATE top_topics
         SET #{period}_score = top.score
@@ -137,10 +207,11 @@ class TopTopic < ActiveRecord::Base
 
   def self.start_of(period)
     case period
-      when :yearly  then 1.year.ago
-      when :monthly then 1.month.ago
-      when :weekly  then 1.week.ago
-      when :daily   then 1.day.ago
+      when :yearly    then 1.year.ago
+      when :monthly   then 1.month.ago
+      when :quarterly then 3.months.ago
+      when :weekly    then 1.week.ago
+      when :daily     then 1.day.ago
     end
   end
 
@@ -163,38 +234,56 @@ end
 #
 # Table name: top_topics
 #
-#  id                  :integer          not null, primary key
-#  topic_id            :integer
-#  yearly_posts_count  :integer          default(0), not null
-#  yearly_views_count  :integer          default(0), not null
-#  yearly_likes_count  :integer          default(0), not null
-#  monthly_posts_count :integer          default(0), not null
-#  monthly_views_count :integer          default(0), not null
-#  monthly_likes_count :integer          default(0), not null
-#  weekly_posts_count  :integer          default(0), not null
-#  weekly_views_count  :integer          default(0), not null
-#  weekly_likes_count  :integer          default(0), not null
-#  daily_posts_count   :integer          default(0), not null
-#  daily_views_count   :integer          default(0), not null
-#  daily_likes_count   :integer          default(0), not null
-#  yearly_score        :float            default(0.0)
-#  monthly_score       :float            default(0.0)
-#  weekly_score        :float            default(0.0)
-#  daily_score         :float            default(0.0)
+#  id                       :integer          not null, primary key
+#  topic_id                 :integer
+#  yearly_posts_count       :integer          default(0), not null
+#  yearly_views_count       :integer          default(0), not null
+#  yearly_likes_count       :integer          default(0), not null
+#  monthly_posts_count      :integer          default(0), not null
+#  monthly_views_count      :integer          default(0), not null
+#  monthly_likes_count      :integer          default(0), not null
+#  weekly_posts_count       :integer          default(0), not null
+#  weekly_views_count       :integer          default(0), not null
+#  weekly_likes_count       :integer          default(0), not null
+#  daily_posts_count        :integer          default(0), not null
+#  daily_views_count        :integer          default(0), not null
+#  daily_likes_count        :integer          default(0), not null
+#  daily_score              :float            default(0.0)
+#  weekly_score             :float            default(0.0)
+#  monthly_score            :float            default(0.0)
+#  yearly_score             :float            default(0.0)
+#  all_score                :float            default(0.0)
+#  daily_op_likes_count     :integer          default(0), not null
+#  weekly_op_likes_count    :integer          default(0), not null
+#  monthly_op_likes_count   :integer          default(0), not null
+#  yearly_op_likes_count    :integer          default(0), not null
+#  quarterly_posts_count    :integer          default(0), not null
+#  quarterly_views_count    :integer          default(0), not null
+#  quarterly_likes_count    :integer          default(0), not null
+#  quarterly_score          :float            default(0.0)
+#  quarterly_op_likes_count :integer          default(0), not null
 #
 # Indexes
 #
-#  index_top_topics_on_daily_likes_count    (daily_likes_count)
-#  index_top_topics_on_daily_posts_count    (daily_posts_count)
-#  index_top_topics_on_daily_views_count    (daily_views_count)
-#  index_top_topics_on_monthly_likes_count  (monthly_likes_count)
-#  index_top_topics_on_monthly_posts_count  (monthly_posts_count)
-#  index_top_topics_on_monthly_views_count  (monthly_views_count)
-#  index_top_topics_on_topic_id             (topic_id) UNIQUE
-#  index_top_topics_on_weekly_likes_count   (weekly_likes_count)
-#  index_top_topics_on_weekly_posts_count   (weekly_posts_count)
-#  index_top_topics_on_weekly_views_count   (weekly_views_count)
-#  index_top_topics_on_yearly_likes_count   (yearly_likes_count)
-#  index_top_topics_on_yearly_posts_count   (yearly_posts_count)
-#  index_top_topics_on_yearly_views_count   (yearly_views_count)
+#  index_top_topics_on_daily_likes_count         (daily_likes_count)
+#  index_top_topics_on_daily_op_likes_count      (daily_op_likes_count)
+#  index_top_topics_on_daily_posts_count         (daily_posts_count)
+#  index_top_topics_on_daily_views_count         (daily_views_count)
+#  index_top_topics_on_monthly_likes_count       (monthly_likes_count)
+#  index_top_topics_on_monthly_op_likes_count    (monthly_op_likes_count)
+#  index_top_topics_on_monthly_posts_count       (monthly_posts_count)
+#  index_top_topics_on_monthly_views_count       (monthly_views_count)
+#  index_top_topics_on_quarterly_likes_count     (quarterly_likes_count)
+#  index_top_topics_on_quarterly_op_likes_count  (quarterly_op_likes_count)
+#  index_top_topics_on_quarterly_posts_count     (quarterly_posts_count)
+#  index_top_topics_on_quarterly_views_count     (quarterly_views_count)
+#  index_top_topics_on_topic_id                  (topic_id) UNIQUE
+#  index_top_topics_on_weekly_likes_count        (weekly_likes_count)
+#  index_top_topics_on_weekly_op_likes_count     (weekly_op_likes_count)
+#  index_top_topics_on_weekly_posts_count        (weekly_posts_count)
+#  index_top_topics_on_weekly_views_count        (weekly_views_count)
+#  index_top_topics_on_yearly_likes_count        (yearly_likes_count)
+#  index_top_topics_on_yearly_op_likes_count     (yearly_op_likes_count)
+#  index_top_topics_on_yearly_posts_count        (yearly_posts_count)
+#  index_top_topics_on_yearly_views_count        (yearly_views_count)
 #

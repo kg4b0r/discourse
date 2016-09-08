@@ -60,8 +60,17 @@ module Middleware
         @env["REQUEST_METHOD"] == "GET"
       end
 
+      def has_auth_cookie?
+        CurrentUser.has_auth_cookie?(@env)
+      end
+
+      def no_cache_bypass
+        request = Rack::Request.new(@env)
+        request.cookies['_bypass_cache'].nil?
+      end
+
       def cacheable?
-        !!(!CurrentUser.has_auth_cookie?(@env) && get?)
+        !!(!has_auth_cookie? && get? && no_cache_bypass)
       end
 
       def cached
@@ -85,6 +94,7 @@ module Middleware
 
         if status == 200 && cache_duration
           headers_stripped = headers.dup.delete_if{|k, _| ["Set-Cookie","X-MiniProfiler-Ids"].include? k}
+          headers_stripped["X-Discourse-Cached"] = "true"
           parts = []
           response.each do |part|
             parts << part

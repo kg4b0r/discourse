@@ -1,11 +1,11 @@
-require 'spec_helper'
+require 'rails_helper'
 require_dependency 'jobs/base'
 
 describe Jobs::TestEmail do
 
   context '.execute' do
     it 'raises an error when the address is missing' do
-      lambda { Jobs::TestEmail.new.execute({}) }.should raise_error(Discourse::InvalidParameters)
+      expect { Jobs::TestEmail.new.execute({}) }.to raise_error(Discourse::InvalidParameters)
     end
 
     context 'with an address' do

@@ -5,56 +5,72 @@
     <title><%= content_for?(:title) ? yield(:title) + ' - ' + SiteSetting.title : SiteSetting.title %></title>
     <meta name="description" content="<%= @description_meta || SiteSetting.site_description %>">
     <%= render partial: "layouts/head" %>
+    <%= render partial: "common/special_font_face" %>
+    <%= render partial: "common/discourse_stylesheet" %>
+    <%= discourse_csrf_tags %>
 
     <%- if SiteSetting.enable_escaped_fragments? %>
-    <meta name="fragment" content="!">
+      <meta name="fragment" content="!">
     <%- end %>
 
     <%- if shared_session_key %>
-    <meta name="shared_session_key" content="<%= shared_session_key %>">
+      <meta name="shared_session_key" content="<%= shared_session_key %>">
     <%- end %>
 
-    <%= script "preload_store" %>
+    <script>
+      window.EmberENV = window.EmberENV || {};
+      window.EmberENV['FORCE_JQUERY'] = true;
+    </script>
+
     <%= script "locales/#{I18n.locale}" %>
+    <%= script "ember_jquery" %>
+    <%= script "preload-store" %>
     <%= script "vendor" %>
+    <%= script "pretty-text-bundle" %>
     <%= script "application" %>
+
     <%- if staff? %>
-      <%= script "admin"%>
+      <%= script "admin" %>
     <%- end %>
 
-    <%= raw SiteText.text_for(:head) %>
+    <%- unless customization_disabled? %>
+      <%= raw SiteCustomization.custom_head_tag(session[:preview_style]) %>
+    <%- end %>
 
     <%= render_google_universal_analytics_code %>
+    <link rel="manifest" href="<%= Discourse.base_uri %>/manifest.json">
 
     <%= yield :head %>
   </head>
 
-  <body>
+  <body class="<%= body_classes %>">
+    <%= render_google_tag_manager_code %>
+
+    <div class='debug-eyeline'></div>
+
     <noscript data-path="<%= request.env['PATH_INFO'] %>">
-      <header class="d-header">
-        <div class="container">
-          <div class="contents">
-            <div class="row">
-              <div class="title span13">
-                <a href="/"><img src="<%= (mobile_view? && SiteSetting.mobile_logo_url) || SiteSetting.logo_url %>" alt="<%=SiteSetting.title%>" id="site-logo"></a>
-              </div>
-            </div>
-          </div>
-        </div>
-      </header>
-      <div id="main-outlet" class="container">
+      <%= render partial: 'header' %>
+      <div id="main-outlet" class="wrap">
         <!-- preload-content: -->
         <%= yield %>
         <!-- :preload-content -->
+        <footer>
+          <nav itemscope itemtype='http://schema.org/SiteNavigationElement'>
+            <a href='<%= path "/" %>'><%= t 'home_title' %></a>
+            <%= link_to t('js.filters.categories.title'), path("/categories") %>
+            <%= link_to t('guidelines_topic.title'), path("/guidelines") %>
+            <%= link_to t('tos_topic.title'), path("/tos") %>
+            <%= link_to t('privacy_topic.title'), path("/privacy") %>
+          </nav>
+        </footer>
       </div>
+
       <footer id='noscript-footer'>
         <p><%= t 'powered_by_html' %></p>
       </footer>
     </noscript>
 
-    <!--[if IE 9]><script type="text/javascript">ie = "new";</script><![endif]-->
-
-    <%- unless customization_disabled? %>
+    <%- unless customization_disabled? || loading_admin? %>
       <%= SiteCustomization.custom_header(session[:preview_style], mobile_view? ? :mobile : :desktop) %>
     <%- end %>
 
@@ -65,7 +81,7 @@
     </div>
 
     <% unless current_user %>
-      <form id='hidden-login-form' method="post" action="<%=login_path%>" style="display: none;">
+      <form id='hidden-login-form' method="post" action="<%=main_app.login_path%>" style="display: none;">
         <input name="username" type="text"     id="signin_username">
         <input name="password" type="password" id="signin_password">
         <input name="redirect" type="hidden">
@@ -75,9 +91,12 @@
 
     <%- if @preloaded.present? %>
       <script>
-      <%- @preloaded.each do |key, json| %>
-        PreloadStore.store("<%= key %>",<%= escape_unicode(json) %>);
-      <% end %>
+      (function() {
+        var ps = require('preload-store').default;
+        <%- @preloaded.each do |key, json| %>
+          ps.store("<%= key %>", <%= escape_unicode(json) %>);
+        <% end %>
+      })();
       </script>
     <%- end %>
 
@@ -87,6 +106,8 @@
 
     <%= render_google_analytics_code %>
 
-    <%= raw SiteText.text_for(:bottom) %>
+    <%- unless customization_disabled? %>
+      <%= raw SiteCustomization.custom_body_tag(session[:preview_style]) %>
+    <%- end %>
   </body>
 </html>

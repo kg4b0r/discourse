@@ -1,27 +1,99 @@
-export default Ember.ArrayController.extend(Discourse.Presence, {
-  loading: false,
-  itemController: 'admin-log-screened-ip-address',
+import debounce from 'discourse/lib/debounce';
+import { outputExportResult } from 'discourse/lib/export-result';
+import { exportEntity } from 'discourse/lib/export-csv';
+import ScreenedIpAddress from 'admin/models/screened-ip-address';
 
-  show: function() {
-    var self = this;
+export default Ember.ArrayController.extend({
+  loading: false,
+  filter: null,
+  savedIpAddress: null,
+
+  show: debounce(function() {
     this.set('loading', true);
-    Discourse.ScreenedIpAddress.findAll().then(function(result) {
-      self.set('model', result);
-      self.set('loading', false);
-    });
-  },
+    ScreenedIpAddress.findAll(this.get("filter"))
+                     .then(result => {
+                       this.set('model', result);
+                       this.set('loading', false);
+                      });
+  }, 250).observes("filter"),
 
   actions: {
-    recordAdded: function(arg) {
+    allow(record) {
+      record.set('action_name', 'do_nothing');
+      record.save();
+    },
+
+    block(record) {
+      record.set('action_name', 'block');
+      record.save();
+    },
+
+    edit(record) {
+      if (!record.get('editing')) {
+        this.set("savedIpAddress", record.get('ip_address'));
+      }
+      record.set('editing', true);
+    },
+
+    cancel(record) {
+      if (this.get('savedIpAddress') && record.get('editing')) {
+        record.set('ip_address', this.get('savedIpAddress'));
+      }
+      record.set('editing', false);
+    },
+
+    save(record) {
+      const wasEditing = record.get('editing');
+      record.set('editing', false);
+      record.save().then(saved => {
+        if (saved.success) {
+          this.set('savedIpAddress', null);
+        } else {
+          bootbox.alert(saved.errors);
+          if (wasEditing) record.set('editing', true);
+        }
+      }).catch(e => {
+        if (e.responseJSON && e.responseJSON.errors) {
+          bootbox.alert(I18n.t("generic_error_with_reason", {error: e.responseJSON.errors.join('. ')}));
+        } else {
+          bootbox.alert(I18n.t("generic_error"));
+        }
+        if (wasEditing) record.set('editing', true);
+      });
+    },
+
+    destroy(record) {
+      const self = this;
+      return bootbox.confirm(
+        I18n.t("admin.logs.screened_ips.delete_confirm", { ip_address: record.get('ip_address') }),
+        I18n.t("no_value"),
+        I18n.t("yes_value"),
+        function (result) {
+          if (result) {
+            record.destroy().then(deleted => {
+              if (deleted) {
+                self.get("content").removeObject(record);
+              } else {
+                bootbox.alert(I18n.t("generic_error"));
+              }
+            }).catch(e => {
+              bootbox.alert(I18n.t("generic_error_with_reason", {error: "http: " + e.status + " - " + e.body}));
+            });
+          }
+        }
+      );
+    },
+
+    recordAdded(arg) {
       this.get("model").unshiftObject(arg);
     },
 
-    rollUp: function() {
-      var self = this;
+    rollUp() {
+      const self = this;
       return bootbox.confirm(I18n.t("admin.logs.screened_ips.roll_up_confirm"), I18n.t("no_value"), I18n.t("yes_value"), function (confirmed) {
         if (confirmed) {
-          self.set("loading", true)
-          return Discourse.ScreenedIpAddress.rollUp().then(function(results) {
+          self.set("loading", true);
+          return ScreenedIpAddress.rollUp().then(function(results) {
             if (results && results.subnets) {
               if (results.subnets.length > 0) {
                 self.send("show");
@@ -34,6 +106,10 @@ export default Ember.ArrayController.extend(Discourse.Presence, {
           });
         }
       });
+    },
+
+    exportScreenedIpList() {
+      exportEntity('screened_ip').then(outputExportResult);
     }
   }
 });

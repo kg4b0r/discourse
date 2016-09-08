@@ -1,133 +1,387 @@
-import DiscourseController from 'discourse/controllers/controller';
+import DiscourseURL from 'discourse/lib/url';
+import Quote from 'discourse/lib/quote';
+import Draft from 'discourse/models/draft';
+import Composer from 'discourse/models/composer';
+import { default as computed, observes } from 'ember-addons/ember-computed-decorators';
+import { relativeAge } from 'discourse/lib/formatter';
+import { escapeExpression } from 'discourse/lib/utilities';
+import InputValidation from 'discourse/models/input-validation';
 
-export default DiscourseController.extend({
-  needs: ['modal', 'topic', 'composer-messages'],
+function loadDraft(store, opts) {
+  opts = opts || {};
 
-  replyAsNewTopicDraft: Em.computed.equal('model.draftKey', Discourse.Composer.REPLY_AS_NEW_TOPIC_KEY),
+  let draft = opts.draft;
+  const draftKey = opts.draftKey;
+  const draftSequence = opts.draftSequence;
+
+  try {
+    if (draft && typeof draft === 'string') {
+      draft = JSON.parse(draft);
+    }
+  } catch (error) {
+    draft = null;
+    Draft.clear(draftKey, draftSequence);
+  }
+  if (draft && ((draft.title && draft.title !== '') || (draft.reply && draft.reply !== ''))) {
+    const composer = store.createRecord('composer');
+    composer.open({
+      draftKey,
+      draftSequence,
+      action: draft.action,
+      title: draft.title,
+      categoryId: draft.categoryId || opts.categoryId,
+      postId: draft.postId,
+      archetypeId: draft.archetypeId,
+      reply: draft.reply,
+      metaData: draft.metaData,
+      usernames: draft.usernames,
+      draft: true,
+      composerState: Composer.DRAFT,
+      composerTime: draft.composerTime,
+      typingTime: draft.typingTime
+    });
+    return composer;
+  }
+}
+
+const _popupMenuOptionsCallbacks = [];
+
+export function addPopupMenuOptionsCallback(callback) {
+  _popupMenuOptionsCallbacks.push(callback);
+}
+
+export default Ember.Controller.extend({
+  needs: ['modal', 'topic', 'application'],
+  replyAsNewTopicDraft: Em.computed.equal('model.draftKey', Composer.REPLY_AS_NEW_TOPIC_KEY),
   checkedMessages: false,
-
+  messageCount: null,
   showEditReason: false,
   editReason: null,
-  maxTitleLength: Discourse.computed.setting('max_topic_title_length'),
   scopedCategoryId: null,
+  optionsVisible: false,
+  lastValidatedAt: null,
+  isUploading: false,
+  topic: null,
+  linkLookup: null,
+  whisperOrUnlistTopic: Ember.computed.or('model.whisper', 'model.unlistTopic'),
 
-  _initializeSimilar: function() {
-    this.set('similarTopics', []);
-  }.on('init'),
+  @computed('model.replyingToTopic', 'model.creatingPrivateMessage', 'model.targetUsernames')
+  focusTarget(replyingToTopic, creatingPM, usernames) {
+    if (this.capabilities.isIOS) { return "none"; }
+
+    // Focus on usernames if it's blank or if it's just you
+    usernames = usernames || "";
+    if (creatingPM && usernames.length === 0 || usernames === this.currentUser.get('username')) {
+      return 'usernames';
+    }
+
+    if (replyingToTopic) {
+      return 'reply';
+    }
+
+    return 'title';
+  },
+
+  showToolbar: Em.computed({
+    get(){
+      const keyValueStore = this.container.lookup('key-value-store:main');
+      const storedVal = keyValueStore.get("toolbar-enabled");
+      if (this._toolbarEnabled === undefined && storedVal === undefined) {
+        // iPhone 6 is 375, anything narrower and toolbar should
+        // be default disabled.
+        // That said we should remember the state
+        this._toolbarEnabled = $(window).width() > 370 && !this.capabilities.isAndroid;
+      }
+      return this._toolbarEnabled || storedVal === "true";
+    },
+    set(key, val){
+      const keyValueStore = this.container.lookup('key-value-store:main');
+      this._toolbarEnabled = val;
+      keyValueStore.set({key: "toolbar-enabled", value: val ? "true" : "false"});
+      return val;
+    }
+  }),
+
+  topicModel: Ember.computed.alias('controllers.topic.model'),
+
+  @computed('model.canEditTitle', 'model.creatingPrivateMessage')
+  canEditTags(canEditTitle, creatingPrivateMessage) {
+    return !this.site.mobileView &&
+            this.site.get('can_tag_topics') &&
+            canEditTitle &&
+            !creatingPrivateMessage;
+  },
+
+  @computed('model.whisper', 'model.unlistTopic')
+  whisperOrUnlistTopicText(whisper, unlistTopic) {
+    if (whisper) {
+      return I18n.t("composer.whisper");
+    } else if (unlistTopic) {
+      return I18n.t("composer.unlist");
+    }
+  },
+
+  @computed
+  isStaffUser() {
+    const currentUser = this.currentUser;
+    return currentUser && currentUser.get('staff');
+  },
+
+  canUnlistTopic: Em.computed.and('model.creatingTopic', 'isStaffUser'),
+
+  @computed('model.action', 'isStaffUser')
+  canWhisper(action, isStaffUser) {
+    return isStaffUser && this.siteSettings.enable_whispers && action === Composer.REPLY;
+  },
+
+  @computed("popupMenuOptions")
+  showPopupMenu(popupMenuOptions) {
+    return popupMenuOptions ? popupMenuOptions.some(option => option.condition) : false;
+  },
+
+  _setupPopupMenuOption(callback) {
+    let option = callback();
+
+    if (option.condition) {
+      option.condition = this.get(option.condition);
+    } else {
+      option.condition = true;
+    }
+
+    return option;
+  },
+
+  @computed("model.composeState", "model.creatingTopic")
+  popupMenuOptions(composeState) {
+    if (composeState === 'open') {
+      let options = [];
+
+      options.push(this._setupPopupMenuOption(() => {
+        return {
+          action: 'toggleInvisible',
+          icon: 'eye-slash',
+          label: 'composer.toggle_unlisted',
+          condition: "canUnlistTopic"
+        };
+      }));
+
+      options.push(this._setupPopupMenuOption(() => {
+        return {
+          action: 'toggleWhisper',
+          icon: 'eye-slash',
+          label: 'composer.toggle_whisper',
+          condition: "canWhisper"
+        };
+      }));
+
+      return options.concat(_popupMenuOptionsCallbacks.map(callback => {
+        return this._setupPopupMenuOption(callback);
+      }));
+    }
+  },
 
   showWarning: function() {
     if (!Discourse.User.currentProp('staff')) { return false; }
 
     var usernames = this.get('model.targetUsernames');
+    var hasTargetGroups = this.get('model.hasTargetGroups');
 
     // We need exactly one user to issue a warning
-    if (Em.empty(usernames) || usernames.split(',').length !== 1) {
+    if (Ember.isEmpty(usernames) || usernames.split(',').length !== 1 || hasTargetGroups) {
       return false;
     }
     return this.get('model.creatingPrivateMessage');
   }.property('model.creatingPrivateMessage', 'model.targetUsernames'),
 
   actions: {
+    addLinkLookup(linkLookup) {
+      this.set('linkLookup', linkLookup);
+    },
+
+    afterRefresh($preview) {
+      const topic = this.get('model.topic');
+      const linkLookup = this.get('linkLookup');
+      if (!topic || !linkLookup) { return; }
+
+      // Don't check if there's only one post
+      if (topic.get('posts_count') === 1) { return; }
+
+      const post = this.get('model.post');
+      if (post && post.get('user_id') !== this.currentUser.id) { return; }
+
+      const $links = $('a[href]', $preview);
+      $links.each((idx, l) => {
+        const href = $(l).prop('href');
+        if (href && href.length) {
+          const [warn, info] = linkLookup.check(post, href);
+
+          if (warn) {
+            const body = I18n.t('composer.duplicate_link', {
+              domain: info.domain,
+              username: info.username,
+              post_url: topic.urlForPostNumber(info.post_number),
+              ago: relativeAge(moment(info.posted_at).toDate(), { format: 'medium' })
+            });
+            this.appEvents.trigger('composer-messages:create', {
+              extraClass: 'custom-body',
+              templateName: 'custom-body',
+              body
+            });
+            return false;
+          }
+        }
+        return true;
+      });
+    },
+
+    toggleWhisper() {
+      this.toggleProperty('model.whisper');
+    },
+
+    toggleInvisible() {
+      this.toggleProperty('model.unlistTopic');
+    },
+
+    toggleToolbar() {
+      this.toggleProperty('showToolbar');
+    },
+
+    showOptions(toolbarEvent, loc) {
+      this.set('toolbarEvent', toolbarEvent);
+      this.appEvents.trigger('popup-menu:open', loc);
+      this.set('optionsVisible', true);
+    },
+
+    hideOptions() {
+      this.set('optionsVisible', false);
+    },
+
     // Toggle the reply view
-    toggle: function() {
+    toggle() {
       this.toggle();
     },
 
-    togglePreview: function() {
+    togglePreview() {
       this.get('model').togglePreview();
     },
 
     // Import a quote from the post
-    importQuote: function() {
-      this.get('model').importQuote();
+    importQuote(toolbarEvent) {
+      const postStream = this.get('topic.postStream');
+      let postId = this.get('model.post.id');
+
+      // If there is no current post, use the first post id from the stream
+      if (!postId && postStream) {
+        postId = postStream.get('stream.firstObject');
+      }
+
+      // If we're editing a post, fetch the reply when importing a quote
+      if (this.get('model.editingPost')) {
+        const replyToPostNumber = this.get('model.post.reply_to_post_number');
+        if (replyToPostNumber) {
+          const replyPost = postStream.get('posts').findBy('post_number', replyToPostNumber);
+          if (replyPost) {
+            postId = replyPost.get('id');
+          }
+        }
+      }
+
+      if (postId) {
+        this.set('model.loading', true);
+        const composer = this;
+
+        return this.store.find('post', postId).then(function(post) {
+          const quote = Quote.build(post, post.get("raw"), {raw: true, full: true});
+          toolbarEvent.addText(quote);
+          composer.set('model.loading', false);
+        });
+      }
     },
 
-    cancel: function() {
+    cancel() {
       this.cancelComposer();
     },
 
-    save: function() {
+    save() {
       this.save();
     },
 
-    displayEditReason: function() {
+    displayEditReason() {
       this.set("showEditReason", true);
     },
 
-    hitEsc: function() {
+    hitEsc() {
+      if ((this.get('messageCount') || 0) > 0) {
+        this.appEvents.trigger('composer-messages:close');
+        return;
+      }
+
       if (this.get('model.viewOpen')) {
         this.shrink();
       }
     },
 
-    openIfDraft: function() {
+    openIfDraft() {
       if (this.get('model.viewDraft')) {
-        this.set('model.composeState', Discourse.Composer.OPEN);
+        this.set('model.composeState', Composer.OPEN);
       }
     },
 
-  },
+    groupsMentioned(groups) {
+      if (!this.get('model.creatingPrivateMessage') && !this.get('model.topic.isPrivateMessage')) {
+        groups.forEach(group => {
+          const body = I18n.t('composer.group_mentioned', {
+            group: "@" + group.name,
+            count: group.user_count,
+            group_link: Discourse.getURL(`/group/${group.name}/members`)
+          });
+          this.appEvents.trigger('composer-messages:create', {
+            extraClass: 'custom-body',
+            templateName: 'custom-body',
+            body
+          });
+        });
+      }
+    }
 
-  updateDraftStatus: function() {
-    var c = this.get('model');
-    if (c) { c.updateDraftStatus(); }
-  },
-
-  appendText: function(text) {
-    var c = this.get('model');
-    if (c) { c.appendText(text); }
-  },
-
-  appendBlockAtCursor: function(text) {
-    var c = this.get('model');
-    if (c) { c.appendText(text, $('#wmd-input').caret(), {block: true}); }
   },
 
   categories: function() {
     return Discourse.Category.list();
   }.property(),
 
-
-  toggle: function() {
+  toggle() {
     this.closeAutocomplete();
     switch (this.get('model.composeState')) {
-      case Discourse.Composer.OPEN:
-        if (this.blank('model.reply') && this.blank('model.title')) {
+      case Composer.OPEN:
+        if (Ember.isEmpty(this.get('model.reply')) && Ember.isEmpty(this.get('model.title'))) {
           this.close();
         } else {
           this.shrink();
         }
         break;
-      case Discourse.Composer.DRAFT:
-        this.set('model.composeState', Discourse.Composer.OPEN);
+      case Composer.DRAFT:
+        this.set('model.composeState', Composer.OPEN);
         break;
-      case Discourse.Composer.SAVING:
+      case Composer.SAVING:
         this.close();
     }
     return false;
   },
 
-  disableSubmit: function() {
-    return this.get('model.loading');
-  }.property('model.loading'),
+  disableSubmit: Ember.computed.or("model.loading", "isUploading"),
 
-  save: function(force) {
-    var composer = this.get('model'),
-        self = this;
-
+  save(force) {
+    const composer = this.get('model');
+    const self = this;
 
     // Clear the warning state if we're not showing the checkbox anymore
     if (!this.get('showWarning')) {
       this.set('model.isWarning', false);
     }
 
-    if(composer.get('cantSubmitPost')) {
-      var now = Date.now();
-      this.setProperties({
-        'view.showTitleTip': now,
-        'view.showCategoryTip': now,
-        'view.showReplyTip': now
-      });
+    if (composer.get('cantSubmitPost')) {
+      this.set('lastValidatedAt', Date.now());
       return;
     }
 
@@ -135,24 +389,25 @@ export default DiscourseController.extend({
 
     // for now handle a very narrow use case
     // if we are replying to a topic AND not on the topic pop the window up
-    if(!force && composer.get('replyingToTopic')) {
-      var topic = this.get('topic');
-      if (!topic || topic.get('id') !== composer.get('topic.id'))
-      {
-        var message = I18n.t("composer.posting_not_on_topic", {title: this.get('model.topic.title')});
+    if (!force && composer.get('replyingToTopic')) {
 
-        var buttons = [{
+      const currentTopic = this.get('topicModel');
+      if (!currentTopic || currentTopic.get('id') !== composer.get('topic.id'))
+      {
+        const message = I18n.t("composer.posting_not_on_topic");
+
+        let buttons = [{
           "label": I18n.t("composer.cancel"),
           "class": "cancel",
           "link": true
         }];
 
-        if(topic) {
+        if (currentTopic) {
           buttons.push({
-            "label": I18n.t("composer.reply_here") + "<br/><div class='topic-title overflow-ellipsis'>" + topic.get('title') + "</div>",
+            "label": I18n.t("composer.reply_here") + "<br/><div class='topic-title overflow-ellipsis'>" + escapeExpression(currentTopic.get('title')) + "</div>",
             "class": "btn btn-reply-here",
-            "callback": function(){
-              composer.set('topic', topic);
+            "callback": function() {
+              composer.set('topic', currentTopic);
               composer.set('post', null);
               self.save(true);
             }
@@ -160,117 +415,94 @@ export default DiscourseController.extend({
         }
 
         buttons.push({
-          "label": I18n.t("composer.reply_original") + "<br/><div class='topic-title overflow-ellipsis'>" + this.get('model.topic.title') + "</div>",
+          "label": I18n.t("composer.reply_original") + "<br/><div class='topic-title overflow-ellipsis'>" + escapeExpression(this.get('model.topic.title')) + "</div>",
           "class": "btn-primary btn-reply-on-original",
-          "callback": function(){
+          "callback": function() {
             self.save(true);
           }
         });
 
-        bootbox.dialog(message, buttons, {"classes": "reply-where-modal"});
+        bootbox.dialog(message, buttons, { "classes": "reply-where-modal" });
         return;
       }
     }
 
-    return composer.save({
-      imageSizes: this.get('view').imageSizes(),
-      editReason: this.get("editReason")
-    }).then(function(opts) {
+    var staged = false;
 
-      // If we replied as a new topic successfully, remove the draft.
-      if (self.get('replyAsNewTopicDraft')) {
+    // TODO: This should not happen in model
+    const imageSizes = {};
+    $('#reply-control .d-editor-preview img').each((i, e) => {
+      const $img = $(e);
+      const src = $img.prop('src');
+
+      if (src && src.length) {
+        imageSizes[src] = { width: $img.width(), height: $img.height() };
+      }
+    });
+
+    const promise = composer.save({ imageSizes, editReason: this.get("editReason")}).then(function(result) {
+      if (result.responseJson.action === "enqueued") {
+        self.send('postWasEnqueued', result.responseJson);
         self.destroyDraft();
+        self.close();
+        self.appEvents.trigger('post-stream:refresh');
+        return result;
       }
 
-      opts = opts || {};
+      // If user "created a new topic/post" or "replied as a new topic" successfully, remove the draft.
+      if (result.responseJson.action === "create_post" || self.get('replyAsNewTopicDraft')) {
+        self.destroyDraft();
+      }
+      if (self.get('model.action') === 'edit') {
+        self.appEvents.trigger('post-stream:refresh', { id: parseInt(result.responseJson.id) });
+      } else {
+        self.appEvents.trigger('post-stream:refresh');
+      }
+
+      if (result.responseJson.action === "create_post") {
+        self.appEvents.trigger('post:highlight', result.payload.post_number);
+      }
       self.close();
 
-      var currentUser = Discourse.User.current();
+      const currentUser = Discourse.User.current();
       if (composer.get('creatingTopic')) {
         currentUser.set('topic_count', currentUser.get('topic_count') + 1);
       } else {
         currentUser.set('reply_count', currentUser.get('reply_count') + 1);
       }
 
-      if ((!composer.get('replyingToTopic')) || (!Discourse.User.currentProp('disable_jump_reply'))) {
-        Discourse.URL.routeTo(opts.post.get('url'));
-      }
-    }, function(error) {
-      composer.set('disableDrafts', false);
-      bootbox.alert(error);
-    });
-  },
-
-  /**
-    Checks to see if a reply has been typed. This is signaled by a keyUp
-    event in a view.
-
-    @method checkReplyLength
-  **/
-  checkReplyLength: function() {
-    if (this.present('model.reply')) {
-      // Notify the composer messages controller that a reply has been typed. Some
-      // messages only appear after typing.
-      this.get('controllers.composer-messages').typedReply();
-    }
-  },
-
-  /**
-    Fired after a user stops typing. Considers whether to check for similar
-    topics based on the current composer state.
-
-    @method findSimilarTopics
-  **/
-  findSimilarTopics: function() {
-
-    // We don't care about similar topics unless creating a topic
-    if (!this.get('model.creatingTopic')) return;
-
-    var body = this.get('model.reply'),
-        title = this.get('model.title'),
-        self = this,
-        message;
-
-    // Ensure the fields are of the minimum length
-    if (body.length < Discourse.SiteSettings.min_body_similar_length ||
-        title.length < Discourse.SiteSettings.min_title_similar_length) { return; }
-
-    // TODO pass the 200 in from somewhere
-    body = body.substr(0, 200);
-
-    // Done search over and over
-    if((title + body) === this.get('lastSimilaritySearch')) { return; }
-    this.set('lastSimilaritySearch', title + body);
-
-    var messageController = this.get('controllers.composer-messages'),
-        similarTopics = this.get('similarTopics');
-
-    Discourse.Topic.findSimilarTo(title, body).then(function (newTopics) {
-      similarTopics.clear();
-      similarTopics.pushObjects(newTopics);
-
-      if (similarTopics.get('length') > 0) {
-        message = Discourse.ComposerMessage.create({
-          templateName: 'composer/similar_topics',
-          similarTopics: similarTopics,
-          extraClass: 'similar-topics'
-        });
-
-        self.set('similarTopicsMessage', message);
-        messageController.popup(message);
-      } else {
-        message = self.get('similarTopicsMessage');
-        if (message) {
-          messageController.send('hideMessage', message);
+      const disableJumpReply = Discourse.User.currentProp('disable_jump_reply');
+      if (!composer.get('replyingToTopic') || !disableJumpReply) {
+        const post = result.target;
+        if (post && !staged) {
+          DiscourseURL.routeTo(post.get('url'));
         }
       }
+
+    }).catch(function(error) {
+      composer.set('disableDrafts', false);
+      self.appEvents.one('composer:will-open', () => bootbox.alert(error));
     });
 
+    if (this.get('controllers.application.currentRouteName').split('.')[0] === 'topic' &&
+        composer.get('topic.id') === this.get('topicModel.id')) {
+      staged = composer.get('stagedPost');
+    }
+
+    this.appEvents.trigger('post-stream:posted', staged);
+
+    this.messageBus.pause();
+    promise.finally(() => this.messageBus.resume());
+
+    return promise;
   },
 
-  saveDraft: function() {
-    var model = this.get('model');
-    if (model) { model.saveDraft(); }
+  // Notify the composer messages controller that a reply has been typed. Some
+  // messages only appear after typing.
+  checkReplyLength() {
+    if (!Ember.isEmpty('model.reply')) {
+      this.appEvents.trigger('composer:typed-reply');
+    }
   },
 
   /**
@@ -283,30 +515,32 @@ export default DiscourseController.extend({
       @param {Discourse.Topic} [opts.topic] The topic we're replying to
       @param {String} [opts.quote] If we're opening a reply from a quote, the quote we're making
   **/
-  open: function(opts) {
+  open(opts) {
     opts = opts || {};
 
     if (!opts.draftKey) {
       alert("composer was opened without a draft key");
       throw "composer opened without a proper draft key";
     }
+    const self = this;
+    let composerModel = this.get('model');
+
+    if (opts.ignoreIfChanged && composerModel && composerModel.composeState !== Composer.CLOSED) {
+      return;
+    }
 
     // If we show the subcategory list, scope the categories drop down to
     // the category we opened the composer with.
-    if (Discourse.SiteSettings.show_subcategory_list) {
+    if (this.siteSettings.show_subcategory_list && opts.draftKey !== 'reply_as_new_topic') {
       this.set('scopedCategoryId', opts.categoryId);
     }
 
-    var composerMessages = this.get('controllers.composer-messages'),
-        self = this,
-        composerModel = this.get('model');
-
     this.setProperties({ showEditReason: false, editReason: null });
-    composerMessages.reset();
 
     // If we want a different draft than the current composer, close it and clear our model.
-    if (composerModel && opts.draftKey !== composerModel.draftKey &&
-        composerModel.composeState === Discourse.Composer.DRAFT) {
+    if (composerModel &&
+        opts.draftKey !== composerModel.draftKey &&
+        composerModel.composeState === Composer.DRAFT) {
       this.close();
       composerModel = null;
     }
@@ -315,19 +549,16 @@ export default DiscourseController.extend({
       if (composerModel && composerModel.get('replyDirty')) {
 
         // If we're already open, we don't have to do anything
-        if (composerModel.get('composeState') === Discourse.Composer.OPEN &&
-            composerModel.get('draftKey') === opts.draftKey &&
-            composerModel.action === opts.action) {
+        if (composerModel.get('composeState') === Composer.OPEN &&
+            composerModel.get('draftKey') === opts.draftKey && !opts.action) {
           return resolve();
         }
 
         // If it's the same draft, just open it up again.
-        if (composerModel.get('composeState') === Discourse.Composer.DRAFT &&
-            composerModel.get('draftKey') === opts.draftKey &&
-            composerModel.action === opts.action) {
-
-            composerModel.set('composeState', Discourse.Composer.OPEN);
-            return resolve();
+        if (composerModel.get('composeState') === Composer.DRAFT &&
+            composerModel.get('draftKey') === opts.draftKey) {
+          composerModel.set('composeState', Composer.OPEN);
+          if (!opts.action) return resolve();
         }
 
         // If it's a different draft, cancel it and try opening again.
@@ -337,12 +568,18 @@ export default DiscourseController.extend({
       }
 
       // we need a draft sequence for the composer to work
-      if (opts.draftSequence === void 0) {
-        return Discourse.Draft.get(opts.draftKey).then(function(data) {
+      if (opts.draftSequence === undefined) {
+        return Draft.get(opts.draftKey).then(function(data) {
           opts.draftSequence = data.draft_sequence;
           opts.draft = data.draft;
           self._setModel(composerModel, opts);
         }).then(resolve, reject);
+      }
+
+      if (composerModel) {
+        if (composerModel.get('action') !== opts.action) {
+          composerModel.setProperties({ unlistTopic: false, whisper: false });
+        }
       }
 
       self._setModel(composerModel, opts);
@@ -351,41 +588,73 @@ export default DiscourseController.extend({
   },
 
   // Given a potential instance and options, set the model for this composer.
-  _setModel: function(composerModel, opts) {
+  _setModel(composerModel, opts) {
+    this.set('linkLookup', null);
+
     if (opts.draft) {
-      composerModel = Discourse.Composer.loadDraft(opts.draftKey, opts.draftSequence, opts.draft);
+      composerModel = loadDraft(this.store, opts);
       if (composerModel) {
         composerModel.set('topic', opts.topic);
       }
     } else {
-      composerModel = composerModel || Discourse.Composer.create();
+      composerModel = composerModel || this.store.createRecord('composer');
       composerModel.open(opts);
     }
 
     this.set('model', composerModel);
-    composerModel.set('composeState', Discourse.Composer.OPEN);
+    composerModel.set('composeState', Composer.OPEN);
     composerModel.set('isWarning', false);
 
-    var composerMessages = this.get('controllers.composer-messages');
-    composerMessages.queryFor(composerModel);
+    if (opts.topicTitle && opts.topicTitle.length <= this.siteSettings.max_topic_title_length) {
+      this.set('model.title', opts.topicTitle);
+    }
+
+    if (opts.topicCategoryId) {
+      this.set('model.categoryId', opts.topicCategoryId);
+    } else if (opts.topicCategory) {
+      const splitCategory = opts.topicCategory.split("/");
+      let category;
+
+      if (!splitCategory[1]) {
+        category = this.site.get('categories').findProperty('nameLower', splitCategory[0].toLowerCase());
+      } else {
+        const categories = Discourse.Category.list();
+        const mainCategory = categories.findProperty('nameLower', splitCategory[0].toLowerCase());
+        category = categories.find(function(item) {
+          return item && item.get('nameLower') === splitCategory[1].toLowerCase() && item.get('parent_category_id') === mainCategory.id;
+        });
+      }
+
+      if (category) {
+        this.set('model.categoryId', category.get('id'));
+      }
+    }
+
+    if (opts.topicTags && !this.site.mobileView && this.site.get('can_tag_topics')) {
+      this.set('model.tags', opts.topicTags.split(","));
+    }
+
+    if (opts.topicBody) {
+      this.set('model.reply', opts.topicBody);
+    }
   },
 
   // View a new reply we've made
-  viewNewReply: function() {
-    Discourse.URL.routeTo(this.get('createdPost.url'));
+  viewNewReply() {
+    DiscourseURL.routeTo(this.get('model.createdPost.url'));
     this.close();
     return false;
   },
 
-  destroyDraft: function() {
-    var key = this.get('model.draftKey');
+  destroyDraft() {
+    const key = this.get('model.draftKey');
     if (key) {
-      Discourse.Draft.clear(key, this.get('model.draftSequence'));
+      Draft.clear(key, this.get('model.draftSequence'));
     }
   },
 
-  cancelComposer: function() {
-    var self = this;
+  cancelComposer() {
+    const self = this;
 
     return new Ember.RSVP.Promise(function (resolve) {
       if (self.get('model.hasMetaData') || self.get('model.replyDirty')) {
@@ -408,8 +677,7 @@ export default DiscourseController.extend({
     });
   },
 
-
-  shrink: function() {
+  shrink() {
     if (this.get('model.replyDirty')) {
       this.collapse();
     } else {
@@ -417,34 +685,43 @@ export default DiscourseController.extend({
     }
   },
 
-  collapse: function() {
-    this.saveDraft();
-    this.set('model.composeState', Discourse.Composer.DRAFT);
+  _saveDraft() {
+    const model = this.get('model');
+    if (model) { model.saveDraft(); };
   },
 
-  close: function() {
-    this.setProperties({
-      model: null,
-      'view.showTitleTip': false,
-      'view.showCategoryTip': false,
-      'view.showReplyTip': false
-    });
+  @observes('model.reply', 'model.title')
+  _shouldSaveDraft() {
+    Ember.run.debounce(this, this._saveDraft, 2000);
   },
 
-  closeAutocomplete: function() {
-    $('#wmd-input').autocomplete({ cancel: true });
+  @computed('model.categoryId', 'lastValidatedAt')
+  categoryValidation(categoryId, lastValidatedAt) {
+    if( !this.siteSettings.allow_uncategorized_topics && !categoryId) {
+      return InputValidation.create({ failed: true, reason: I18n.t('composer.error.category_missing'), lastShownAt: lastValidatedAt });
+    }
   },
 
-  showOptions: function() {
-    var _ref;
-    return (_ref = this.get('controllers.modal')) ? _ref.show(Discourse.ArchetypeOptionsModalView.create({
-      archetype: this.get('model.archetype'),
-      metaData: this.get('model.metaData')
-    })) : void 0;
+  collapse() {
+    this._saveDraft();
+    this.set('model.composeState', Composer.DRAFT);
+  },
+
+  close() {
+    this.setProperties({ model: null, lastValidatedAt: null });
+  },
+
+  closeAutocomplete() {
+    $('.d-editor-input').autocomplete({ cancel: true });
   },
 
   canEdit: function() {
     return this.get("model.action") === "edit" && Discourse.User.current().get("can_edit");
-  }.property("model.action")
+  }.property("model.action"),
+
+  visible: function() {
+    var state = this.get('model.composeState');
+    return state && state !== 'closed';
+  }.property('model.composeState')
 
 });

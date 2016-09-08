@@ -1,4 +1,6 @@
-module("Discourse.User");
+import { blank, present } from 'helpers/qunit-helpers';
+
+module("Discourse.UserStream");
 
 test('basics', function(){
   var user = Discourse.User.create({id: 1, username: 'eviltrout'});
@@ -25,6 +27,6 @@ test('filterParam', function() {
   equal(stream.get('filterParam'), Discourse.UserAction.TYPES.likes_given);
 
   stream.set('filter', Discourse.UserAction.TYPES.replies);
-  equal(stream.get('filterParam'), '6,7,9');
+  equal(stream.get('filterParam'), '6,9');
 
 });

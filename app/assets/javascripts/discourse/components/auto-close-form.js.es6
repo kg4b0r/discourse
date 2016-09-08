@@ -1,26 +1,32 @@
+import computed from "ember-addons/ember-computed-decorators";
+import { observes } from "ember-addons/ember-computed-decorators";
+
 export default Ember.Component.extend({
-  autoCloseValid: false,
   limited: false,
+  autoCloseValid: false,
 
-  autoCloseUnits: function() {
-    var key = this.get("limited") ? "composer.auto_close.limited.units"
-                                  : "composer.auto_close.all.units";
+  @computed("limited")
+  autoCloseUnits(limited) {
+    const key = limited ? "composer.auto_close.limited.units" : "composer.auto_close.all.units";
     return I18n.t(key);
-  }.property("limited"),
+  },
 
-  autoCloseExamples: function() {
-    var key = this.get("limited") ? "composer.auto_close.limited.examples"
-                                  : "composer.auto_close.all.examples";
+  @computed("limited")
+  autoCloseExamples(limited) {
+    const key = limited ? "composer.auto_close.limited.examples" : "composer.auto_close.all.examples";
     return I18n.t(key);
-  }.property("limited"),
+  },
 
-  _updateAutoCloseValid: function() {
-    var isValid = this._isAutoCloseValid(this.get("autoCloseTime"), this.get("limited"));
+  @observes("autoCloseTime", "limited")
+  _updateAutoCloseValid() {
+    const limited = this.get("limited"),
+          autoCloseTime = this.get("autoCloseTime"),
+          isValid = this._isAutoCloseValid(autoCloseTime, limited);
     this.set("autoCloseValid", isValid);
-  }.observes("autoCloseTime", "limited"),
+  },
 
-  _isAutoCloseValid: function(autoCloseTime, limited) {
-    var t = (autoCloseTime || "").trim();
+  _isAutoCloseValid(autoCloseTime, limited) {
+    const t = (autoCloseTime || "").toString().trim();
     if (t.length === 0) {
       // "empty" is always valid
       return true;
@@ -28,7 +34,7 @@ export default Ember.Component.extend({
       // only # of hours in limited mode
       return t.match(/^(\d+\.)?\d+$/);
     } else {
-      if (t.match(/^\d{4}-\d{1,2}-\d{1,2} \d{1,2}:\d{2}(\s?[AP]M)?$/i)) {
+      if (t.match(/^\d{4}-\d{1,2}-\d{1,2}(?: \d{1,2}:\d{2}(\s?[AP]M)?){0,1}$/i)) {
         // timestamp must be in the future
         return moment(t).isAfter();
       } else {

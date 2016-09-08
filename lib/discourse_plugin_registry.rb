@@ -4,29 +4,29 @@
 class DiscoursePluginRegistry
 
   class << self
-    attr_accessor :javascripts
-    attr_accessor :server_side_javascripts
-    attr_accessor :admin_javascripts
-    attr_accessor :stylesheets
-    attr_accessor :mobile_stylesheets
-    attr_accessor :desktop_stylesheets
-    attr_accessor :sass_variables
-    attr_accessor :handlebars
-    attr_accessor :custom_html
-    attr_accessor :serialized_current_user_fields
+    attr_writer :javascripts
+    attr_writer :admin_javascripts
+    attr_writer :stylesheets
+    attr_writer :mobile_stylesheets
+    attr_writer :desktop_stylesheets
+    attr_writer :sass_variables
+    attr_writer :handlebars
+    attr_writer :serialized_current_user_fields
+    attr_writer :seed_data
 
+    attr_accessor :custom_html
 
     # Default accessor values
     def javascripts
       @javascripts ||= Set.new
     end
 
-    def admin_javascripts
-      @admin_javascripts ||= Set.new
+    def asset_globs
+      @asset_globs ||= Set.new
     end
 
-    def server_side_javascripts
-      @server_side_javascripts ||= Set.new
+    def admin_javascripts
+      @admin_javascripts ||= Set.new
     end
 
     def stylesheets
@@ -52,11 +52,14 @@ class DiscoursePluginRegistry
     def serialized_current_user_fields
       @serialized_current_user_fields ||= Set.new
     end
+
+    def seed_data
+      @seed_data ||= HashWithIndifferentAccess.new({})
+    end
   end
 
   def register_js(filename, options={})
     # If we have a server side option, add that too.
-    self.class.server_side_javascripts << options[:server_side] if options[:server_side].present?
     self.class.javascripts << filename
   end
 
@@ -68,12 +71,59 @@ class DiscoursePluginRegistry
     Archetype.register(name, options)
   end
 
-  def javascripts
-    self.class.javascripts
+  def self.register_glob(root, extension, options=nil)
+    self.asset_globs << [root, extension, options || {}]
   end
 
-  def server_side_javascripts
-    self.class.server_side_javascripts
+  def self.each_globbed_asset(each_options=nil)
+    each_options ||= {}
+
+    self.asset_globs.each do |g|
+      root, ext, options = *g
+
+      if options[:admin]
+        next unless each_options[:admin]
+      else
+        next if each_options[:admin]
+      end
+
+      Dir.glob("#{root}/**/*") do |f|
+        yield f, ext
+      end
+    end
+  end
+
+  def self.register_asset(asset, opts=nil)
+    if asset =~ /\.js$|\.js\.erb$|\.js\.es6$/
+      if opts == :admin
+        self.admin_javascripts << asset
+      else
+        self.javascripts << asset
+      end
+    elsif asset =~ /\.css$|\.scss$/
+      if opts == :mobile
+        self.mobile_stylesheets << asset
+      elsif opts == :desktop
+        self.desktop_stylesheets << asset
+      elsif opts == :variables
+        self.sass_variables << asset
+      else
+        self.stylesheets << asset
+      end
+
+    elsif asset =~ /\.hbs$/
+      self.handlebars << asset
+    elsif asset =~ /\.js\.handlebars$/
+      self.handlebars << asset
+    end
+  end
+
+  def self.register_seed_data(key, value)
+    self.seed_data[key] = value
+  end
+
+  def javascripts
+    self.class.javascripts
   end
 
   def stylesheets
@@ -98,12 +148,22 @@ class DiscoursePluginRegistry
 
   def self.clear
     self.javascripts = nil
-    self.server_side_javascripts = nil
     self.stylesheets = nil
     self.mobile_stylesheets = nil
     self.desktop_stylesheets = nil
     self.sass_variables = nil
     self.handlebars = nil
+  end
+
+  def self.reset!
+    javascripts.clear
+    admin_javascripts.clear
+    stylesheets.clear
+    mobile_stylesheets.clear
+    desktop_stylesheets.clear
+    sass_variables.clear
+    serialized_current_user_fields
+    asset_globs.clear
   end
 
   def self.setup(plugin_class)

@@ -2,20 +2,35 @@
 // Discourse header
 // --------------------------------------------------
 
+@media only screen and (max-width: 320px) {
+  #site-text-logo {
+    font-size: 18px;
+  }
+}
+
 .d-header {
-  padding-left: 10px !important;
-  padding-right: 10px !important;
 
   #site-logo {
-    max-width: 122px;
+    max-width: 130px;
   }
 
-  .panel {
-    margin-right: 20px;
+  // some protection for text-only site titles
+  .title {
+    max-width: 50%;
+    height: 39px;
+    overflow: hidden;
+    padding: 0;
+    text-overflow: clip;
+    display: table;
+    a {
+      display: table-cell;
+      vertical-align: middle;
+    }
   }
 
   .icons {
     .badge-notification {
+      top: -5px;
       color: $secondary;
     }
 
@@ -28,49 +43,9 @@
     display:none;
   }
 }
+
 #main-outlet {
   padding-top: 60px;
-}
-
-// Dropdowns
-// --------------------------------------------------
-
-.d-dropdown {
-  width: 290px;
-  margin-top: -1px;
-
-  // Common
-
-  .heading {
-    color: $primary;
-    font-weight: bold;
-    font-size: 12px;
-    line-height: 15px;
-  }
-
-  // Search
-
-  .searching {
-    position: absolute;
-    top: 0;
-    right: 25px;
-  }
-  
-  input[type='text'] {
-    width: 265px;
-    font-size: 16px;
-  }
-
-  &#user-dropdown {
-    width: 155px;
-  }
-
-  .btn {
-    padding: 2px 8px;
-    .fa {
-      margin-right: 5px;
-    }
-  }
 }
 
 .search-link .badge-category {
@@ -78,9 +53,5 @@
 }
 
 .search-link .topic-statuses .topic-status i {
-  font-size: 14px;
-}
-
-.d-dropdown#search-dropdown .heading {
-  padding: 0;
+  font-size: 1em;
 }

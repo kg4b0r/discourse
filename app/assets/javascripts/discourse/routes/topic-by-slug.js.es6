@@ -1,9 +1,12 @@
+import Topic from 'discourse/models/topic';
+import DiscourseURL from 'discourse/lib/url';
+
 export default Discourse.Route.extend({
   model: function(params) {
-    return Discourse.Topic.idForSlug(params.slug);
+    return Topic.idForSlug(params.slug);
   },
 
   afterModel: function(result) {
-    Discourse.URL.routeTo(result.url);
+    DiscourseURL.routeTo(result.url, { replaceURL: true });
   }
 });

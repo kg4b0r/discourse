@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'rails_helper'
 require 'post_destroyer'
 
 describe PostDestroyer do
@@ -41,10 +41,10 @@ describe PostDestroyer do
       reply3.reload
       reply4.reload
 
-      reply1.deleted_at.should == nil
-      reply2.deleted_at.should_not == nil
-      reply3.deleted_at.should == nil
-      reply4.deleted_at.should == nil
+      expect(reply1.deleted_at).to eq(nil)
+      expect(reply2.deleted_at).not_to eq(nil)
+      expect(reply3.deleted_at).to eq(nil)
+      expect(reply4.deleted_at).to eq(nil)
     end
 
   end
@@ -69,9 +69,9 @@ describe PostDestroyer do
       reply2.reload
       reply3.reload
 
-      reply1.deleted_at.should == nil
-      reply2.deleted_at.should_not == nil
-      reply3.deleted_at.should == nil
+      expect(reply1.deleted_at).to eq(nil)
+      expect(reply2.deleted_at).not_to eq(nil)
+      expect(reply3.deleted_at).to eq(nil)
 
       # if topic is deleted we should still be able to destroy stubs
 
@@ -80,7 +80,7 @@ describe PostDestroyer do
       PostDestroyer.destroy_stubs
 
       reply1.reload
-      reply1.deleted_at.should == nil
+      expect(reply1.deleted_at).to eq(nil)
 
       # flag the post, it should not nuke the stub anymore
       topic.recover!
@@ -89,7 +89,7 @@ describe PostDestroyer do
       PostDestroyer.destroy_stubs
 
       reply1.reload
-      reply1.deleted_at.should == nil
+      expect(reply1.deleted_at).to eq(nil)
 
     end
 
@@ -111,8 +111,8 @@ describe PostDestroyer do
       reply1.reload
       reply2.reload
 
-      reply1.deleted_at.should == nil
-      reply2.deleted_at.should_not == nil
+      expect(reply1.deleted_at).to eq(nil)
+      expect(reply2.deleted_at).not_to eq(nil)
 
       SiteSetting.stubs(:delete_removed_posts_after).returns(72)
 
@@ -120,13 +120,13 @@ describe PostDestroyer do
 
       PostDestroyer.destroy_stubs
 
-      reply1.reload.deleted_at.should == nil
+      expect(reply1.reload.deleted_at).to eq(nil)
 
       SiteSetting.stubs(:delete_removed_posts_after).returns(47)
 
       PostDestroyer.destroy_stubs
 
-      reply1.reload.deleted_at.should_not == nil
+      expect(reply1.reload.deleted_at).not_to eq(nil)
     end
 
     it "deletes posts immediately if delete_removed_posts_after is 0" do
@@ -138,63 +138,130 @@ describe PostDestroyer do
 
       PostDestroyer.new(reply1.user, reply1).destroy
 
-      reply1.reload.deleted_at.should_not == nil
+      expect(reply1.reload.deleted_at).not_to eq(nil)
+    end
+  end
+
+  describe "recovery and user actions" do
+    it "recreates user actions" do
+      reply = create_post(topic: post.topic)
+      author = reply.user
+
+      post_action = author.user_actions.where(action_type: UserAction::REPLY, target_post_id: reply.id).first
+      expect(post_action).to be_present
+
+      PostDestroyer.new(moderator, reply).destroy
+
+      # User Action is removed
+      post_action = author.user_actions.where(action_type: UserAction::REPLY, target_post_id: reply.id).first
+      expect(post_action).to be_blank
+
+      PostDestroyer.new(moderator, reply).recover
+
+      # On recovery, the user action is recreated
+      post_action = author.user_actions.where(action_type: UserAction::REPLY, target_post_id: reply.id).first
+      expect(post_action).to be_present
+    end
+
+    describe "post_count recovery" do
+      before do
+        post
+        @user = post.user
+        expect(@user.user_stat.post_count).to eq(1)
+      end
+
+      context "recovered by user" do
+        it "should increment the user's post count" do
+          PostDestroyer.new(@user, post).destroy
+          expect(@user.user_stat.post_count).to eq(1)
+
+          PostDestroyer.new(@user, post.reload).recover
+          expect(@user.reload.user_stat.post_count).to eq(1)
+        end
+      end
+
+      context "recovered by admin" do
+        it "should increment the user's post count" do
+          PostDestroyer.new(moderator, post).destroy
+          expect(@user.user_stat.post_count).to eq(0)
+
+          PostDestroyer.new(admin, post).recover
+          expect(@user.reload.user_stat.post_count).to eq(1)
+        end
+      end
     end
   end
 
   describe 'basic destroying' do
-
     it "as the creator of the post, doesn't delete the post" do
-      SiteSetting.stubs(:unique_posts_mins).returns(5)
-      SiteSetting.stubs(:delete_removed_posts_after).returns(24)
+      begin
+        post2 = create_post
 
-      post2 = create_post # Create it here instead of with "let" so unique_posts_mins can do its thing
+        called = 0
+        topic_destroyed = -> (topic, user) do
+          expect(topic).to eq(post2.topic)
+          expect(user).to eq(post2.user)
+          called += 1
+        end
 
-      @orig = post2.cooked
-      PostDestroyer.new(post2.user, post2).destroy
-      post2.reload
+        DiscourseEvent.on(:topic_destroyed, &topic_destroyed)
 
-      post2.deleted_at.should be_blank
-      post2.deleted_by.should be_blank
-      post2.user_deleted.should == true
-      post2.raw.should == I18n.t('js.post.deleted_by_author', {count: 24})
-      post2.version.should == 2
+        @orig = post2.cooked
+        PostDestroyer.new(post2.user, post2).destroy
+        post2.reload
 
-      # lets try to recover
-      PostDestroyer.new(post2.user, post2).recover
-      post2.reload
-      post2.version.should == 3
-      post2.user_deleted.should == false
-      post2.cooked.should == @orig
+        expect(post2.deleted_at).to be_blank
+        expect(post2.deleted_by).to be_blank
+        expect(post2.user_deleted).to eq(true)
+        expect(post2.raw).to eq(I18n.t('js.post.deleted_by_author', {count: 24}))
+        expect(post2.version).to eq(2)
+        expect(called).to eq(1)
+
+        called = 0
+        topic_recovered = -> (topic, user) do
+          expect(topic).to eq(post2.topic)
+          expect(user).to eq(post2.user)
+          called += 1
+        end
+
+        DiscourseEvent.on(:topic_recovered, &topic_recovered)
+
+        # lets try to recover
+        PostDestroyer.new(post2.user, post2).recover
+        post2.reload
+        expect(post2.version).to eq(3)
+        expect(post2.user_deleted).to eq(false)
+        expect(post2.cooked).to eq(@orig)
+        expect(called).to eq(1)
+      ensure
+        DiscourseEvent.off(:topic_destroyed, &topic_destroyed)
+        DiscourseEvent.off(:topic_recovered, &topic_recovered)
+      end
     end
 
     context "as a moderator" do
       it "deletes the post" do
-        PostDestroyer.new(moderator, post).destroy
-        post.deleted_at.should be_present
-        post.deleted_by.should == moderator
-      end
-
-      it "updates the user's post_count" do
         author = post.user
-        expect {
-          PostDestroyer.new(moderator, post).destroy
-          author.reload
-        }.to change { author.post_count }.by(-1)
-      end
 
-      it "creates a new user history entry" do
-        expect {
-          PostDestroyer.new(moderator, post).destroy
-        }.to change { UserHistory.count}.by(1)
+        post_count = author.post_count
+        history_count = UserHistory.count
+
+        PostDestroyer.new(moderator, post).destroy
+
+        expect(post.deleted_at).to be_present
+        expect(post.deleted_by).to eq(moderator)
+
+        author.reload
+        expect(author.post_count).to eq(post_count - 1)
+        expect(UserHistory.count).to eq(history_count + 1)
       end
     end
 
     context "as an admin" do
       it "deletes the post" do
         PostDestroyer.new(admin, post).destroy
-        post.deleted_at.should be_present
-        post.deleted_by.should == admin
+        expect(post.deleted_at).to be_present
+        expect(post.deleted_by).to eq(admin)
       end
 
       it "updates the user's post_count" do
@@ -221,11 +288,11 @@ describe PostDestroyer do
     end
 
     it 'resets the last_poster_id back to the OP' do
-      topic.last_post_user_id.should == user.id
+      expect(topic.last_post_user_id).to eq(user.id)
     end
 
     it 'resets the last_posted_at back to the OP' do
-      topic.last_posted_at.to_i.should == post.created_at.to_i
+      expect(topic.last_posted_at.to_i).to eq(post.created_at.to_i)
     end
 
     context 'topic_user' do
@@ -233,15 +300,15 @@ describe PostDestroyer do
       let(:topic_user) { second_user.topic_users.find_by(topic_id: topic.id) }
 
       it 'clears the posted flag for the second user' do
-        topic_user.posted?.should == false
+        expect(topic_user.posted?).to eq(false)
       end
 
       it "sets the second user's last_read_post_number back to 1" do
-        topic_user.last_read_post_number.should == 1
+        expect(topic_user.last_read_post_number).to eq(1)
       end
 
       it "sets the second user's last_read_post_number back to 1" do
-        topic_user.highest_seen_post_number.should == 1
+        expect(topic_user.highest_seen_post_number).to eq(1)
       end
 
     end
@@ -262,8 +329,8 @@ describe PostDestroyer do
       end
 
       it "deletes the post" do
-        post.deleted_at.should be_present
-        post.deleted_by.should == moderator
+        expect(post.deleted_at).to be_present
+        expect(post.deleted_by).to eq(moderator)
       end
     end
 
@@ -273,8 +340,8 @@ describe PostDestroyer do
       end
 
       it "deletes the post" do
-        post.deleted_at.should be_present
-        post.deleted_by.should == admin
+        expect(post.deleted_at).to be_present
+        expect(post.deleted_by).to eq(admin)
       end
 
       it "creates a new user history entry" do
@@ -291,7 +358,7 @@ describe PostDestroyer do
     let!(:post) { Fabricate(:post, raw: "Hello @CodingHorror") }
 
     it "should feature the users again (in case they've changed)" do
-      Jobs.expects(:enqueue).with(:feature_topic_users, has_entries(topic_id: post.topic_id, except_post_id: post.id))
+      Jobs.expects(:enqueue).with(:feature_topic_users, has_entries(topic_id: post.topic_id))
       PostDestroyer.new(moderator, post).destroy
     end
 
@@ -302,22 +369,22 @@ describe PostDestroyer do
 
       it 'changes the post count of the topic' do
         post.reload
-        lambda {
+        expect {
           PostDestroyer.new(moderator, reply).destroy
           post.topic.reload
-        }.should change(post.topic, :posts_count).by(-1)
+        }.to change(post.topic, :posts_count).by(-1)
       end
 
       it 'lowers the reply_count when the reply is deleted' do
-        lambda {
+        expect {
           PostDestroyer.new(moderator, reply).destroy
-        }.should change(post.post_replies, :count).by(-1)
+        }.to change(post.post_replies, :count).by(-1)
       end
 
       it 'should increase the post_number when there are deletion gaps' do
         PostDestroyer.new(moderator, reply).destroy
         p = Fabricate(:post, user: post.user, topic: post.topic)
-        p.post_number.should == 3
+        expect(p.post_number).to eq(3)
       end
 
     end
@@ -328,9 +395,9 @@ describe PostDestroyer do
     it 'removes notifications when deleted' do
       user = Fabricate(:evil_trout)
       post = create_post(raw: 'Hello @eviltrout')
-      lambda {
+      expect {
         PostDestroyer.new(Fabricate(:moderator), post).destroy
-      }.should change(user.notifications, :count).by(-1)
+      }.to change(user.notifications, :count).by(-1)
     end
   end
 
@@ -344,15 +411,15 @@ describe PostDestroyer do
 
       PostDestroyer.new(moderator, second_post).destroy
 
-      PostAction.find_by(id: bookmark.id).should == nil
+      expect(PostAction.find_by(id: bookmark.id)).to eq(nil)
 
       off_topic = PostAction.find_by(id: flag.id)
-      off_topic.should_not == nil
-      off_topic.agreed_at.should_not == nil
+      expect(off_topic).not_to eq(nil)
+      expect(off_topic.agreed_at).not_to eq(nil)
 
       second_post.reload
-      second_post.bookmark_count.should == 0
-      second_post.off_topic_count.should == 1
+      expect(second_post.bookmark_count).to eq(0)
+      expect(second_post.off_topic_count).to eq(1)
     end
   end
 

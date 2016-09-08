@@ -15,7 +15,7 @@ task 'docker:test' do
     puts "Starting background redis"
     @redis_pid = Process.spawn('redis-server --dir tmp/test_data/redis')
 
-    @postgres_bin = "/usr/lib/postgresql/9.3/bin/"
+    @postgres_bin = "/usr/lib/postgresql/9.5/bin/"
     `#{@postgres_bin}initdb -D tmp/test_data/pg`
 
     # speed up db, never do this in production mmmmk
@@ -34,6 +34,10 @@ task 'docker:test' do
       @good &&= run_or_fail("bundle exec rspec")
     end
     unless ENV["RUBY_ONLY"]
+      @good &&= run_or_fail("eslint app/assets/javascripts")
+      @good &&= run_or_fail("eslint --ext .es6 app/assets/javascripts")
+      @good &&= run_or_fail("eslint --ext .es6 test/javascripts")
+      @good &&= run_or_fail("eslint test/javascripts")
       @good &&= run_or_fail("bundle exec rake qunit:test")
     end
 

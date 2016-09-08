@@ -1,12 +1,20 @@
 class PostSerializer < BasicPostSerializer
 
   # To pass in additional information we might need
-  attr_accessor :topic_view,
-                :parent_post,
-                :add_raw,
-                :single_post_link_counts,
-                :draft_sequence,
-                :post_actions
+  INSTANCE_VARS = [
+    :topic_view,
+    :parent_post,
+    :add_raw,
+    :add_title,
+    :single_post_link_counts,
+    :draft_sequence,
+    :post_actions,
+    :all_post_actions
+  ]
+
+  INSTANCE_VARS.each do |v|
+    self.send(:attr_accessor, v)
+  end
 
   attributes :post_number,
              :post_type,
@@ -21,13 +29,19 @@ class PostSerializer < BasicPostSerializer
              :yours,
              :topic_id,
              :topic_slug,
-             :topic_auto_close_at,
+             :topic_title,
+             :topic_html_title,
+             :category_id,
              :display_username,
              :primary_group_name,
+             :primary_group_flair_url,
+             :primary_group_flair_bg_color,
+             :primary_group_flair_color,
              :version,
              :can_edit,
              :can_delete,
              :can_recover,
+             :can_wiki,
              :link_counts,
              :read,
              :user_title,
@@ -51,14 +65,46 @@ class PostSerializer < BasicPostSerializer
              :wiki,
              :user_custom_fields,
              :static_doc,
-             :via_email
+             :via_email,
+             :is_auto_generated,
+             :action_code,
+             :action_code_who
 
-  def topic_slug
-    object.try(:topic).try(:slug)
+  def initialize(object, opts)
+    super(object, opts)
+    PostSerializer::INSTANCE_VARS.each do |name|
+      if opts.include? name
+        self.send("#{name}=", opts[name])
+      end
+    end
   end
 
-  def topic_auto_close_at
-    object.try(:topic).try(:auto_close_at)
+  def topic_slug
+    object.topic && object.topic.slug
+  end
+
+  def include_topic_title?
+    @add_title
+  end
+
+  def include_topic_html_title?
+    @add_title
+  end
+
+  def include_category_id?
+    @add_title
+  end
+
+  def topic_title
+    object.topic.title
+  end
+
+  def topic_html_title
+    object.topic.fancy_title
+  end
+
+  def category_id
+    object.topic.category_id
   end
 
   def moderator?
@@ -89,6 +135,10 @@ class PostSerializer < BasicPostSerializer
     scope.can_recover_post?(object)
   end
 
+  def can_wiki
+    scope.can_wiki?(object)
+  end
+
   def display_username
     object.user.try(:name)
   end
@@ -101,6 +151,18 @@ class PostSerializer < BasicPostSerializer
     else
       object.user.primary_group.name if object.user.primary_group
     end
+  end
+
+  def primary_group_flair_url
+    object.user.try(:primary_group).try(:flair_url)
+  end
+
+  def primary_group_flair_bg_color
+    object.user.try(:primary_group).try(:flair_bg_color)
+  end
+
+  def primary_group_flair_color
+    object.user.try(:primary_group).try(:flair_color)
   end
 
   def link_counts
@@ -137,8 +199,7 @@ class PostSerializer < BasicPostSerializer
   def reply_to_user
     {
       username: object.reply_to_user.username,
-      avatar_template: object.reply_to_user.avatar_template,
-      uploaded_avatar_id: object.reply_to_user.uploaded_avatar_id
+      avatar_template: object.reply_to_user.avatar_template
     }
   end
 
@@ -154,6 +215,13 @@ class PostSerializer < BasicPostSerializer
     scope.is_staff? && object.deleted_by.present?
   end
 
+  # Helper function to decide between #post_actions and @all_post_actions
+  def actions
+    return post_actions if post_actions.present?
+    return all_post_actions[object.id] if all_post_actions.present?
+    nil
+  end
+
   # Summary of the actions taken on this post
   def actions_summary
     result = []
@@ -162,37 +230,38 @@ class PostSerializer < BasicPostSerializer
       count_col = "#{sym}_count".to_sym
 
       count = object.send(count_col) if object.respond_to?(count_col)
-      count ||= 0
-      action_summary = {
-        id: id,
-        count: count,
-        hidden: (sym == :vote),
-        can_act: scope.post_can_act?(object, sym, taken_actions: post_actions)
-      }
+      summary = { id: id, count: count }
+      summary[:hidden] = true if sym == :vote
+      summary[:can_act] = true if scope.post_can_act?(object, sym, taken_actions: actions)
 
       if sym == :notify_user && scope.current_user.present? && scope.current_user == object.user
-        action_summary[:can_act] = false # Don't send a pm to yourself about your own post, silly
+        summary.delete(:can_act)
       end
 
       # The following only applies if you're logged in
-      if action_summary[:can_act] && scope.current_user.present?
-        action_summary[:can_defer_flags] = scope.is_staff? &&
-                                           PostActionType.flag_types.values.include?(id) &&
-                                           active_flags.present? && active_flags.has_key?(id) &&
-                                           active_flags[id].count > 0
+      if summary[:can_act] && scope.current_user.present?
+        summary[:can_defer_flags] = true if scope.is_staff? &&
+                                                   PostActionType.flag_types.values.include?(id) &&
+                                                   active_flags.present? && active_flags.has_key?(id) &&
+                                                   active_flags[id].count > 0
       end
 
-      if post_actions.present? && post_actions.has_key?(id)
-        action_summary[:acted] = true
-        action_summary[:can_undo] = scope.can_delete?(post_actions[id])
+      if actions.present? && actions.has_key?(id)
+        summary[:acted] = true
+        summary[:can_undo] = true if scope.can_delete?(actions[id])
       end
 
       # only show public data
       unless scope.is_staff? || PostActionType.public_types.values.include?(id)
-        action_summary[:count] = action_summary[:acted] ? 1 : 0
+        summary[:count] = summary[:acted] ? 1 : 0
       end
 
-      result << action_summary
+      summary.delete(:count) if summary[:count] == 0
+
+      # Only include it if the user can do it or it has a count
+      if summary[:can_act] || summary[:count]
+        result << summary
+      end
     end
 
     result
@@ -225,7 +294,7 @@ class PostSerializer < BasicPostSerializer
   end
 
   def include_bookmarked?
-    post_actions.present? && post_actions.keys.include?(PostActionType.types[:bookmark])
+    actions.present? && actions.keys.include?(PostActionType.types[:bookmark])
   end
 
   def include_display_username?
@@ -251,15 +320,35 @@ class PostSerializer < BasicPostSerializer
   end
 
   def include_static_doc?
-    object.post_number == 1 && Discourse.static_doc_topic_ids.include?(object.topic_id)
+    object.is_first_post? && Discourse.static_doc_topic_ids.include?(object.topic_id)
   end
 
   def include_via_email?
     object.via_email?
   end
 
+  def is_auto_generated
+    object.incoming_email.try(:is_auto_generated)
+  end
+
+  def include_is_auto_generated?
+    object.via_email? && is_auto_generated
+  end
+
   def version
     scope.is_staff? ? object.version : object.public_version
+  end
+
+  def include_action_code?
+    object.action_code.present?
+  end
+
+  def action_code_who
+    post_custom_fields["action_code_who"]
+  end
+
+  def include_action_code_who?
+    include_action_code? && action_code_who.present?
   end
 
   private
@@ -270,6 +359,15 @@ class PostSerializer < BasicPostSerializer
 
     def active_flags
       @active_flags ||= (@topic_view.present? && @topic_view.all_active_flags.present?) ? @topic_view.all_active_flags[object.id] : nil
+    end
+
+    def post_custom_fields
+      @post_custom_fields ||=
+        if @topic_view
+          (@topic_view.post_custom_fields && @topic_view.post_custom_fields[object.id]) || {}
+        else
+          object.custom_fields
+        end
     end
 
 end

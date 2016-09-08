@@ -1,24 +1,20 @@
-require 'spec_helper'
+require 'rails_helper'
 require 'file_store/local_store'
 
 describe FileStore::LocalStore do
 
   let(:store) { FileStore::LocalStore.new }
 
-  let(:upload) { build(:upload) }
+  let(:upload) { Fabricate(:upload) }
   let(:uploaded_file) { file_from_fixtures("logo.png") }
 
-  let(:optimized_image) { build(:optimized_image) }
-
-  let(:avatar) { build(:upload) }
+  let(:optimized_image) { Fabricate(:optimized_image) }
 
   describe ".store_upload" do
 
     it "returns a relative url" do
-      Time.stubs(:now).returns(Time.utc(2013, 2, 17, 12, 0, 0, 0))
-      upload.stubs(:id).returns(42)
       store.expects(:copy_file)
-      store.store_upload(uploaded_file, upload).should == "/uploads/default/42/253dc8edf9d4ada1.png"
+      expect(store.store_upload(uploaded_file, upload)).to match(/\/uploads\/default\/original\/.+#{upload.sha1}\.png/)
     end
 
   end
@@ -27,7 +23,7 @@ describe FileStore::LocalStore do
 
     it "returns a relative url" do
       store.expects(:copy_file)
-      store.store_optimized_image({}, optimized_image).should == "/uploads/default/_optimized/86f/7e4/37faa5a7fc_100x200.png"
+      expect(store.store_optimized_image({}, optimized_image)).to match(/\/uploads\/default\/optimized\/.+#{optimized_image.upload.sha1}_#{OptimizedImage::VERSION}_100x200\.png/)
     end
 
   end
@@ -36,29 +32,26 @@ describe FileStore::LocalStore do
 
     it "does not delete non uploaded" do
       FileUtils.expects(:mkdir_p).never
-      upload = Upload.new
-      upload.stubs(:url).returns("/path/to/file")
       store.remove_upload(upload)
     end
 
     it "moves the file to the tombstone" do
       FileUtils.expects(:mkdir_p)
       FileUtils.expects(:move)
-      upload = Upload.new
-      upload.stubs(:url).returns("/uploads/default/42/253dc8edf9d4ada1.png")
+      File.expects(:exists?).returns(true)
       store.remove_upload(upload)
     end
 
   end
 
   describe ".remove_optimized_image" do
+    let(:optimized_image) { Fabricate(:optimized_image, url: "/uploads/default/_optimized/42/253dc8edf9d4ada1.png") }
 
     it "moves the file to the tombstone" do
       FileUtils.expects(:mkdir_p)
       FileUtils.expects(:move)
-      oi = OptimizedImage.new
-      oi.stubs(:url).returns("/uploads/default/_optimized/42/253dc8edf9d4ada1.png")
-      store.remove_optimized_image(upload)
+      File.expects(:exists?).returns(true)
+      store.remove_optimized_image(optimized_image)
     end
 
   end
@@ -66,32 +59,42 @@ describe FileStore::LocalStore do
   describe ".has_been_uploaded?" do
 
     it "identifies relatives urls" do
-      store.has_been_uploaded?("/uploads/default/42/0123456789ABCDEF.jpg").should == true
+      expect(store.has_been_uploaded?("/uploads/default/42/0123456789ABCDEF.jpg")).to eq(true)
     end
 
     it "identifies local urls" do
       Discourse.stubs(:base_url_no_prefix).returns("http://discuss.site.com")
-      store.has_been_uploaded?("http://discuss.site.com/uploads/default/42/0123456789ABCDEF.jpg").should == true
-      store.has_been_uploaded?("//discuss.site.com/uploads/default/42/0123456789ABCDEF.jpg").should == true
+      expect(store.has_been_uploaded?("http://discuss.site.com/uploads/default/42/0123456789ABCDEF.jpg")).to eq(true)
+      expect(store.has_been_uploaded?("//discuss.site.com/uploads/default/42/0123456789ABCDEF.jpg")).to eq(true)
     end
 
     it "identifies local urls when using a CDN" do
       Rails.configuration.action_controller.stubs(:asset_host).returns("http://my.cdn.com")
-      store.has_been_uploaded?("http://my.cdn.com/uploads/default/42/0123456789ABCDEF.jpg").should == true
-      store.has_been_uploaded?("//my.cdn.com/uploads/default/42/0123456789ABCDEF.jpg").should == true
+      expect(store.has_been_uploaded?("http://my.cdn.com/uploads/default/42/0123456789ABCDEF.jpg")).to eq(true)
+      expect(store.has_been_uploaded?("//my.cdn.com/uploads/default/42/0123456789ABCDEF.jpg")).to eq(true)
     end
 
     it "does not match dummy urls" do
-      store.has_been_uploaded?("http://domain.com/uploads/default/42/0123456789ABCDEF.jpg").should == false
-      store.has_been_uploaded?("//domain.com/uploads/default/42/0123456789ABCDEF.jpg").should == false
+      expect(store.has_been_uploaded?("http://domain.com/uploads/default/42/0123456789ABCDEF.jpg")).to eq(false)
+      expect(store.has_been_uploaded?("//domain.com/uploads/default/42/0123456789ABCDEF.jpg")).to eq(false)
     end
 
+  end
+
+  def stub_for_subfolder
+    GlobalSetting.stubs(:relative_url_root).returns('/forum')
+    Discourse.stubs(:base_uri).returns("/forum")
   end
 
   describe ".absolute_base_url" do
 
     it "is present" do
-      store.absolute_base_url.should == "http://test.localhost/uploads/default"
+      expect(store.absolute_base_url).to eq("http://test.localhost/uploads/default")
+    end
+
+    it "supports subfolder" do
+      stub_for_subfolder
+      expect(store.absolute_base_url).to eq("http://test.localhost/forum/uploads/default")
     end
 
   end
@@ -99,22 +102,19 @@ describe FileStore::LocalStore do
   describe ".relative_base_url" do
 
     it "is present" do
-      store.relative_base_url.should == "/uploads/default"
+      expect(store.relative_base_url).to eq("/uploads/default")
+    end
+
+    it "supports subfolder" do
+      stub_for_subfolder
+      expect(store.relative_base_url).to eq("/forum/uploads/default")
     end
 
   end
 
   it "is internal" do
-    store.internal?.should == true
-    store.external?.should == false
-  end
-
-  describe ".avatar_template" do
-
-    it "is present" do
-      store.avatar_template(avatar).should == "/uploads/default/avatars/e9d/71f/5ee7c92d6d/{size}.png"
-    end
-
+    expect(store.internal?).to eq(true)
+    expect(store.external?).to eq(false)
   end
 
 end

@@ -1,20 +1,19 @@
-import ObjectController from 'discourse/controllers/object';
+import EmailPreview from 'admin/models/email-preview';
 
-export default ObjectController.extend({
+export default Ember.Controller.extend({
 
   actions: {
-    refresh: function() {
-      var model = this.get('model'),
-          self = this;
+    refresh() {
+      const model = this.get('model');
 
-      self.set('loading', true);
-      Discourse.EmailPreview.findDigest(this.get('lastSeen')).then(function (email) {
+      this.set('loading', true);
+      EmailPreview.findDigest(this.get('lastSeen'), this.get('username')).then(email => {
         model.setProperties(email.getProperties('html_content', 'text_content'));
-        self.set('loading', false);
+        this.set('loading', false);
       });
     },
 
-    toggleShowHtml: function() {
+    toggleShowHtml() {
       this.toggleProperty('showHtml');
     }
   }

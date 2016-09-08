@@ -1,24 +1,24 @@
-require "spec_helper"
+require "rails_helper"
 
 describe VersionMailer do
   subject { VersionMailer.send_notice }
 
   context 'contact_email is blank' do
-    before { SiteSetting.stubs(:contact_email).returns('') }
+    before { SiteSetting.contact_email = '' }
 
     it "doesn't send the email" do
-      subject.to.should be_blank
+      expect(subject.to).to be_blank
     end
   end
 
   context 'contact_email is set' do
-    before { SiteSetting.stubs(:contact_email).returns('me@example.com') }
+    before { SiteSetting.contact_email = 'me@example.com' }
 
     it "works" do
-      subject.to.should == ['me@example.com']
-      subject.subject.should be_present
-      subject.from.should == [SiteSetting.notification_email]
-      subject.body.should be_present
+      expect(subject.to).to eq(['me@example.com'])
+      expect(subject.subject).to be_present
+      expect(subject.from).to eq([SiteSetting.notification_email])
+      expect(subject.body).to be_present
     end
 
   end

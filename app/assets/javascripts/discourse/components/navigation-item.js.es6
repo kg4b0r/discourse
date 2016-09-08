@@ -1,54 +1,38 @@
-/**
-  This view handles rendering of a navigation item
+import computed from "ember-addons/ember-computed-decorators";
+import StringBuffer from 'discourse/mixins/string-buffer';
 
-  @class NavigationItemComponent
-  @extends Ember.Component
-  @namespace Discourse
-  @module Discourse
-**/
-export default Ember.Component.extend({
+export default Ember.Component.extend(StringBuffer, {
   tagName: 'li',
   classNameBindings: ['active', 'content.hasIcon:has-icon'],
   attributeBindings: ['title'],
   hidden: Em.computed.not('content.visible'),
-  shouldRerender: Discourse.View.renderIfChanged('content.count'),
+  rerenderTriggers: ['content.count'],
 
-  title: function() {
-    var categoryName = this.get('content.categoryName'),
-        name = this.get('content.name'),
-        extra;
+  @computed("content.categoryName", "content.name")
+  title(categoryName, name) {
+    const extra = {};
 
     if (categoryName) {
-      extra = { categoryName: categoryName };
       name = "category";
+      extra.categoryName = categoryName;
     }
-    return I18n.t("filters." + name + ".help", extra);
-  }.property("content.name"),
 
-  active: function() {
-    return this.get('content.filterMode') === this.get('filterMode') ||
-           this.get('filterMode').indexOf(this.get('content.filterMode')) === 0;
-  }.property('content.filterMode', 'filterMode'),
+    return I18n.t("filters." + name.replace("/", ".") + ".help", extra);
+  },
 
-  name: function() {
-    var categoryName = this.get('content.categoryName'),
-        name = this.get('content.name'),
-        extra = { count: this.get('content.count') || 0 };
+  @computed("content.filterMode", "filterMode")
+  active(contentFilterMode, filterMode) {
+    return contentFilterMode === filterMode ||
+           filterMode.indexOf(contentFilterMode) === 0;
+  },
 
-    if (categoryName) {
-      name = 'category';
-      extra.categoryName = Discourse.Formatter.toTitleCase(categoryName);
-    }
-    return I18n.t("filters." + name + ".title", extra);
-  }.property('content.count'),
-
-  render: function(buffer) {
-    var content = this.get('content');
+  renderString(buffer) {
+    const content = this.get('content');
     buffer.push("<a href='" + content.get('href') + "'>");
     if (content.get('hasIcon')) {
       buffer.push("<span class='" + content.get('name') + "'></span>");
     }
-    buffer.push(this.get('name'));
+    buffer.push(this.get('content.displayName'));
     buffer.push("</a>");
   }
 });

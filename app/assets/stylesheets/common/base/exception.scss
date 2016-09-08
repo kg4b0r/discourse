@@ -7,7 +7,7 @@
     height: 60px;
   }
   .reason {
-    font-size: 24px;
+    font-size: 1.714em;
     height: 24px;
   }
   .url {
@@ -21,6 +21,7 @@
     }
   }
   .buttons {
+    display: inline-flex;
     margin-top: 15px;
 
     button {

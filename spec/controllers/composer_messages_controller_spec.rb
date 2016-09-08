@@ -1,20 +1,20 @@
-require 'spec_helper'
+require 'rails_helper'
 
 describe ComposerMessagesController do
 
   context '.index' do
 
     it 'requires you to be logged in' do
-      lambda { xhr :get, :index }.should raise_error(Discourse::NotLoggedIn)
+      expect { xhr :get, :index }.to raise_error(Discourse::NotLoggedIn)
     end
 
     context 'when logged in' do
       let!(:user) { log_in }
-      let(:args) { {'topic_id' => '123', 'post_id' => '333', 'composerAction' => 'reply'} }
+      let(:args) { {'topic_id' => '123', 'post_id' => '333', 'composer_action' => 'reply'} }
 
       it 'redirects to your user preferences' do
         xhr :get, :index
-        response.should be_success
+        expect(response).to be_success
       end
 
       it 'delegates args to the finder' do
@@ -23,10 +23,6 @@ describe ComposerMessagesController do
         finder.expects(:find)
         xhr :get, :index, args
       end
-
     end
-
   end
-
 end
-

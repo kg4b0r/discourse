@@ -1,9 +1,24 @@
-require 'spec_helper'
+require 'rails_helper'
 
 describe OptimizedImage do
 
   let(:upload) { build(:upload) }
   before { upload.id = 42 }
+
+  describe ".local?" do
+
+    def local(url)
+      OptimizedImage.new(url: url).local?
+    end
+
+    it "correctly detects local vs remote" do
+      expect(local("//hello")).to eq(false)
+      expect(local("http://hello")).to eq(false)
+      expect(local("https://hello")).to eq(false)
+      expect(local("https://hello")).to eq(false)
+      expect(local("/hello")).to eq(true)
+    end
+  end
 
   describe ".create_for" do
 
@@ -16,7 +31,7 @@ describe OptimizedImage do
 
         it "returns nil" do
           OptimizedImage.expects(:resize).returns(false)
-          OptimizedImage.create_for(upload, 100, 200).should == nil
+          expect(OptimizedImage.create_for(upload, 100, 200)).to eq(nil)
         end
 
       end
@@ -39,11 +54,11 @@ describe OptimizedImage do
 
         it "works" do
           oi = OptimizedImage.create_for(upload, 100, 200)
-          oi.sha1.should == "da39a3ee5e6b4b0d3255bfef95601890afd80709"
-          oi.extension.should == ".png"
-          oi.width.should == 100
-          oi.height.should == 200
-          oi.url.should == "/internally/stored/optimized/image.png"
+          expect(oi.sha1).to eq("da39a3ee5e6b4b0d3255bfef95601890afd80709")
+          expect(oi.extension).to eq(".png")
+          expect(oi.width).to eq(100)
+          expect(oi.height).to eq(200)
+          expect(oi.url).to eq("/internally/stored/optimized/image.png")
         end
 
       end
@@ -59,7 +74,7 @@ describe OptimizedImage do
 
         it "returns nil" do
           OptimizedImage.expects(:resize).returns(false)
-          OptimizedImage.create_for(upload, 100, 200).should == nil
+          expect(OptimizedImage.create_for(upload, 100, 200)).to eq(nil)
         end
 
       end
@@ -71,18 +86,18 @@ describe OptimizedImage do
         end
 
         it "downloads a copy of the original image" do
-          Tempfile.any_instance.expects(:close!).twice
+          Tempfile.any_instance.expects(:close!)
           store.expects(:download).with(upload).returns(Tempfile.new(["discourse-external", ".png"]))
           OptimizedImage.create_for(upload, 100, 200)
         end
 
         it "works" do
           oi = OptimizedImage.create_for(upload, 100, 200)
-          oi.sha1.should == "da39a3ee5e6b4b0d3255bfef95601890afd80709"
-          oi.extension.should == ".png"
-          oi.width.should == 100
-          oi.height.should == 200
-          oi.url.should == "/externally/stored/optimized/image.png"
+          expect(oi.sha1).to eq("da39a3ee5e6b4b0d3255bfef95601890afd80709")
+          expect(oi.extension).to eq(".png")
+          expect(oi.width).to eq(100)
+          expect(oi.height).to eq(200)
+          expect(oi.url).to eq("/externally/stored/optimized/image.png")
         end
 
       end
@@ -95,12 +110,8 @@ end
 
 class FakeInternalStore
 
-  def internal?
-    true
-  end
-
   def external?
-    !internal?
+    false
   end
 
   def path_for(upload)
@@ -115,12 +126,12 @@ end
 
 class FakeExternalStore
 
-  def external?
-    true
+  def path_for(upload)
+    nil
   end
 
-  def internal?
-    !external?
+  def external?
+    true
   end
 
   def store_optimized_image(file, optimized_image)

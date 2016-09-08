@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'rails_helper'
 require_dependency "freedom_patches/safe_buffer"
 
 describe ActiveSupport::SafeBuffer do
@@ -10,6 +10,6 @@ describe ActiveSupport::SafeBuffer do
     buffer << "hello#{254.chr}".force_encoding("ASCII-8BIT").freeze
 
     # we pay a cost for force encoding, the h gets dropped
-    buffer.should =~ /ello.*hello/
+    expect(buffer).to match(/ello.*hello/)
   end
 end

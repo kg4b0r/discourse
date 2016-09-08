@@ -14,7 +14,7 @@ class TrustLevel
     end
 
     def levels
-      @levels ||= Enum.new(:newuser, :basic, :regular, :leader, :elder, start: 0)
+      @levels ||= Enum.new(:newuser, :basic, :member, :regular, :leader, start: 0)
     end
 
     def all
@@ -24,7 +24,7 @@ class TrustLevel
     end
 
     def valid?(level)
-    valid_range === level
+      valid_range === level
     end
 
     def valid_range

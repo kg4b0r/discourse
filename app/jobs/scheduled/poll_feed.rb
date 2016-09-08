@@ -66,7 +66,7 @@ module Jobs
       private
 
       def rss
-        SimpleRSS.parse open(@feed_url)
+        SimpleRSS.parse open(@feed_url, allow_redirections: :all)
       end
 
     end
@@ -86,11 +86,11 @@ module Jobs
       end
 
       def content
-        @article_rss_item.content || @article_rss_item.description
+        @article_rss_item.content.try(:force_encoding, "UTF-8").try(:scrub) || @article_rss_item.description.try(:force_encoding, "UTF-8").try(:scrub)
       end
 
       def title
-        @article_rss_item.title
+        @article_rss_item.title.force_encoding("UTF-8").scrub
       end
 
       def user

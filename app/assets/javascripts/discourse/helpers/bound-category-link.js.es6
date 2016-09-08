@@ -1,3 +1,4 @@
-import { categoryLinkHTML } from 'discourse/lib/html-builder';
+import { htmlHelper } from 'discourse/lib/helpers';
+import { categoryLinkHTML } from 'discourse/helpers/category-link';
 
-Em.Handlebars.helper('bound-category-link', categoryLinkHTML);
+export default htmlHelper(categoryLinkHTML);

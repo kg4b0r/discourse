@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'rails_helper'
 require_dependency 'topics_bulk_action'
 
 describe TopicsBulkAction do
@@ -15,8 +15,8 @@ describe TopicsBulkAction do
 
       tu = TopicUser.find_by(user_id: post1.user_id, topic_id: post1.topic_id)
 
-      tu.last_read_post_number.should == 3
-      tu.highest_seen_post_number.should == 3
+      expect(tu.last_read_post_number).to eq(3)
+      expect(tu.highest_seen_post_number).to eq(3)
     end
   end
 
@@ -25,7 +25,7 @@ describe TopicsBulkAction do
 
     it "raises an error with an invalid operation" do
       tba = TopicsBulkAction.new(user, [1], type: 'rm_root')
-      -> { tba.perform! }.should raise_error(Discourse::InvalidParameters)
+      expect { tba.perform! }.to raise_error(Discourse::InvalidParameters)
     end
   end
 
@@ -37,9 +37,9 @@ describe TopicsBulkAction do
       it "changes the category and returns the topic_id" do
         tba = TopicsBulkAction.new(topic.user, [topic.id], type: 'change_category', category_id: category.id)
         topic_ids = tba.perform!
-        topic_ids.should == [topic.id]
+        expect(topic_ids).to eq([topic.id])
         topic.reload
-        topic.category.should == category
+        expect(topic.category).to eq(category)
       end
     end
 
@@ -48,9 +48,9 @@ describe TopicsBulkAction do
         Guardian.any_instance.expects(:can_edit?).returns(false)
         tba = TopicsBulkAction.new(topic.user, [topic.id], type: 'change_category', category_id: category.id)
         topic_ids = tba.perform!
-        topic_ids.should == []
+        expect(topic_ids).to eq([])
         topic.reload
-        topic.category.should_not == category
+        expect(topic.category).not_to eq(category)
       end
     end
   end
@@ -73,7 +73,7 @@ describe TopicsBulkAction do
       tba = TopicsBulkAction.new(moderator, [topic.id], type: 'delete')
       tba.perform!
       topic.reload
-      topic.should be_trashed
+      expect(topic).to be_trashed
     end
   end
 
@@ -84,8 +84,8 @@ describe TopicsBulkAction do
       it "updates the notification level" do
         tba = TopicsBulkAction.new(topic.user, [topic.id], type: 'change_notification_level', notification_level_id: 2)
         topic_ids = tba.perform!
-        topic_ids.should == [topic.id]
-        TopicUser.get(topic, topic.user).notification_level.should == 2
+        expect(topic_ids).to eq([topic.id])
+        expect(TopicUser.get(topic, topic.user).notification_level).to eq(2)
       end
     end
 
@@ -94,8 +94,8 @@ describe TopicsBulkAction do
         Guardian.any_instance.expects(:can_see?).returns(false)
         tba = TopicsBulkAction.new(topic.user, [topic.id], type: 'change_notification_level', notification_level_id: 2)
         topic_ids = tba.perform!
-        topic_ids.should == []
-        TopicUser.get(topic, topic.user).should be_blank
+        expect(topic_ids).to eq([])
+        expect(TopicUser.get(topic, topic.user)).to be_blank
       end
     end
   end
@@ -109,9 +109,9 @@ describe TopicsBulkAction do
         Guardian.any_instance.expects(:can_create?).returns(true)
         tba = TopicsBulkAction.new(topic.user, [topic.id], type: 'close')
         topic_ids = tba.perform!
-        topic_ids.should == [topic.id]
+        expect(topic_ids).to eq([topic.id])
         topic.reload
-        topic.should be_closed
+        expect(topic).to be_closed
       end
     end
 
@@ -120,9 +120,9 @@ describe TopicsBulkAction do
         Guardian.any_instance.expects(:can_moderate?).returns(false)
         tba = TopicsBulkAction.new(topic.user, [topic.id], type: 'close')
         topic_ids = tba.perform!
-        topic_ids.should be_blank
+        expect(topic_ids).to be_blank
         topic.reload
-        topic.should_not be_closed
+        expect(topic).not_to be_closed
       end
     end
   end
@@ -136,9 +136,9 @@ describe TopicsBulkAction do
         Guardian.any_instance.expects(:can_create?).returns(true)
         tba = TopicsBulkAction.new(topic.user, [topic.id], type: 'archive')
         topic_ids = tba.perform!
-        topic_ids.should == [topic.id]
+        expect(topic_ids).to eq([topic.id])
         topic.reload
-        topic.should be_archived
+        expect(topic).to be_archived
       end
     end
 
@@ -147,9 +147,88 @@ describe TopicsBulkAction do
         Guardian.any_instance.expects(:can_moderate?).returns(false)
         tba = TopicsBulkAction.new(topic.user, [topic.id], type: 'archive')
         topic_ids = tba.perform!
-        topic_ids.should be_blank
+        expect(topic_ids).to be_blank
         topic.reload
-        topic.should_not be_archived
+        expect(topic).not_to be_archived
+      end
+    end
+  end
+
+  describe "unlist" do
+    let(:topic) { Fabricate(:topic) }
+
+    context "when the user can moderate the topic" do
+      it "unlists the topic and returns the topic_id" do
+        Guardian.any_instance.expects(:can_moderate?).returns(true)
+        Guardian.any_instance.expects(:can_create?).returns(true)
+        tba = TopicsBulkAction.new(topic.user, [topic.id], type: 'unlist')
+        topic_ids = tba.perform!
+        expect(topic_ids).to eq([topic.id])
+        topic.reload
+        expect(topic).not_to be_visible
+      end
+    end
+
+    context "when the user can't edit the topic" do
+      it "doesn't unlist the topic" do
+        Guardian.any_instance.expects(:can_moderate?).returns(false)
+        tba = TopicsBulkAction.new(topic.user, [topic.id], type: 'unlist')
+        topic_ids = tba.perform!
+        expect(topic_ids).to be_blank
+        topic.reload
+        expect(topic).to be_visible
+      end
+    end
+  end
+
+  describe "change_tags" do
+    let(:topic) { Fabricate(:topic) }
+    let(:tag1)  { Fabricate(:tag) }
+    let(:tag2)  { Fabricate(:tag) }
+
+    before do
+      SiteSetting.tagging_enabled = true
+      SiteSetting.min_trust_level_to_tag_topics = 0
+      topic.tags = [tag1, tag2]
+    end
+
+    it "can change the tags, and can create new tags" do
+      SiteSetting.min_trust_to_create_tag = 0
+      tba = TopicsBulkAction.new(topic.user, [topic.id], type: 'change_tags', tags: ['newtag', tag1.name])
+      topic_ids = tba.perform!
+      expect(topic_ids).to eq([topic.id])
+      topic.reload
+      expect(topic.tags.map(&:name).sort).to eq(['newtag', tag1.name].sort)
+    end
+
+    it "can change the tags but not create new ones" do
+      SiteSetting.min_trust_to_create_tag = 4
+      tba = TopicsBulkAction.new(topic.user, [topic.id], type: 'change_tags', tags: ['newtag', tag1.name])
+      topic_ids = tba.perform!
+      expect(topic_ids).to eq([topic.id])
+      topic.reload
+      expect(topic.tags.map(&:name)).to eq([tag1.name])
+    end
+
+    it "can remove all tags" do
+      tba = TopicsBulkAction.new(topic.user, [topic.id], type: 'change_tags', tags: [])
+      topic_ids = tba.perform!
+      expect(topic_ids).to eq([topic.id])
+      topic.reload
+      expect(topic.tags.size).to eq(0)
+    end
+
+    context "when user can't edit topic" do
+      before do
+        Guardian.any_instance.expects(:can_edit?).returns(false)
+      end
+
+      it "doesn't change the tags" do
+        tba = TopicsBulkAction.new(topic.user, [topic.id], type: 'change_tags', tags: ['newtag', tag1.name])
+        topic_ids = tba.perform!
+        expect(topic_ids).to eq([])
+        topic.reload
+        expect(topic.tags.map(&:name)).to eq([tag1.name, tag2.name])
       end
     end
   end

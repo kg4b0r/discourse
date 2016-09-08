@@ -1,6 +1,6 @@
-require 'spec_helper'
+require 'rails_helper'
 
 describe TopicAllowedUser do
-  it { should belong_to :user }
-  it { should belong_to :topic }
+  it { is_expected.to belong_to :user }
+  it { is_expected.to belong_to :topic }
 end

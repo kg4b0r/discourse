@@ -1,36 +1,26 @@
-require 'spec_helper'
+require 'rails_helper'
 require_dependency 'site_setting'
 require_dependency 'site_setting_extension'
 
 describe SiteSetting do
 
-  describe "normalized_embeddable_host" do
-    it 'returns the `embeddable_host` value' do
-      SiteSetting.stubs(:embeddable_host).returns("eviltrout.com")
-      SiteSetting.normalized_embeddable_host.should == "eviltrout.com"
-    end
-
-    it 'strip http from `embeddable_host` value' do
-      SiteSetting.stubs(:embeddable_host).returns("http://eviltrout.com")
-      SiteSetting.normalized_embeddable_host.should == "eviltrout.com"
-    end
-
-    it 'strip https from `embeddable_host` value' do
-      SiteSetting.stubs(:embeddable_host).returns("https://eviltrout.com")
-      SiteSetting.normalized_embeddable_host.should == "eviltrout.com"
-    end
-  end
-
   describe 'topic_title_length' do
     it 'returns a range of min/max topic title length' do
-      SiteSetting.topic_title_length.should ==
+      expect(SiteSetting.topic_title_length).to eq(
         (SiteSetting.defaults[:min_topic_title_length]..SiteSetting.defaults[:max_topic_title_length])
+      )
     end
   end
 
   describe 'post_length' do
     it 'returns a range of min/max post length' do
-      SiteSetting.post_length.should == (SiteSetting.defaults[:min_post_length]..SiteSetting.defaults[:max_post_length])
+      expect(SiteSetting.post_length).to eq(SiteSetting.defaults[:min_post_length]..SiteSetting.defaults[:max_post_length])
+    end
+  end
+
+  describe 'first_post_length' do
+    it 'returns a range of min/max first post length' do
+      expect(SiteSetting.first_post_length).to eq(SiteSetting.defaults[:min_first_post_length]..SiteSetting.defaults[:max_post_length])
     end
   end
 
@@ -62,7 +52,7 @@ describe SiteSetting do
   end
 
   describe "top_menu" do
-    before(:each) { SiteSetting.top_menu = 'one,-nope|two|three,-not|four,ignored|category/xyz' }
+    before { SiteSetting.top_menu = 'one,-nope|two|three,-not|four,ignored|category/xyz|latest' }
 
     describe "items" do
       let(:items) { SiteSetting.top_menu_items }
@@ -80,17 +70,41 @@ describe SiteSetting do
   end
 
   describe "scheme" do
+    before do
+      SiteSetting.force_https = true
+    end
+
 
     it "returns http when ssl is disabled" do
-      SiteSetting.expects(:use_https).returns(false)
-      SiteSetting.scheme.should == "http"
+      SiteSetting.force_https = false
+      expect(SiteSetting.scheme).to eq("http")
     end
 
     it "returns https when using ssl" do
-      SiteSetting.expects(:use_https).returns(true)
-      SiteSetting.scheme.should == "https"
+      expect(SiteSetting.scheme).to eq("https")
     end
 
   end
 
+  context 'deprecated site settings' do
+    before do
+      SiteSetting.force_https = true
+    end
+
+    after do
+      SiteSetting.force_https = false
+    end
+
+    describe '#use_https' do
+      it 'should act as a proxy to the new methods' do
+        expect(SiteSetting.use_https).to eq(true)
+        expect(SiteSetting.use_https?).to eq(true)
+
+        SiteSetting.use_https = false
+
+        expect(SiteSetting.force_https).to eq(false)
+        expect(SiteSetting.force_https?).to eq(false)
+      end
+    end
+  end
 end

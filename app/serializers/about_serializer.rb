@@ -1,6 +1,6 @@
 class AboutSerializer < ApplicationSerializer
-  has_many :moderators, serializer: BasicUserSerializer, embed: :objects
-  has_many :admins, serializer: BasicUserSerializer, embed: :objects
+  has_many :moderators, serializer: UserNameSerializer, embed: :objects
+  has_many :admins, serializer: UserNameSerializer, embed: :objects
 
   attributes :stats,
              :description,
@@ -8,4 +8,8 @@ class AboutSerializer < ApplicationSerializer
              :locale,
              :version,
              :https
+
+  def stats
+    object.class.fetch_cached_stats || Jobs::AboutStats.new.execute({})
+  end
 end

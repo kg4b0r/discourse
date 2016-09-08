@@ -1,29 +1,98 @@
 module JsLocaleHelper
 
-  def self.output_locale(locale, translations = nil)
-    current_locale = I18n.locale
-    I18n.locale = locale.to_sym
+  def self.load_translations(locale, opts=nil)
+    opts ||= {}
 
+    @loaded_translations = nil if opts[:force]
+
+    @loaded_translations ||= HashWithIndifferentAccess.new
+    @loaded_translations[locale] ||= begin
+      locale_str = locale.to_s
+
+      # load default translations
+      translations = YAML::load(File.open("#{Rails.root}/config/locales/client.#{locale_str}.yml"))
+      # load plugins translations
+      plugin_translations = {}
+      Dir["#{Rails.root}/plugins/*/config/locales/client.#{locale_str}.yml"].each do |file|
+        plugin_translations.deep_merge! YAML::load(File.open(file))
+      end
+
+      # merge translations (plugin translations overwrite default translations)
+      translations[locale_str]['js'].deep_merge!(plugin_translations[locale_str]['js']) if translations[locale_str] && plugin_translations[locale_str] && plugin_translations[locale_str]['js']
+
+      # We used to split the admin versus the client side, but it's much simpler to just
+      # include both for now due to the small size of the admin section.
+      #
+      # For now, let's leave it split out in the translation file in case we want to split
+      # it again later, so we'll merge the JSON ourselves.
+      admin_contents = translations[locale_str].delete('admin_js')
+      translations[locale_str]['js'].deep_merge!(admin_contents) if admin_contents.present?
+      translations[locale_str]['js'].deep_merge!(plugin_translations[locale_str]['admin_js']) if translations[locale_str] && plugin_translations[locale_str] && plugin_translations[locale_str]['admin_js']
+
+      translations
+    end
+  end
+
+  # purpose-built recursive algorithm ahoy!
+  def self.deep_delete_matches(deleting_from, *checking_hashes)
+    checking_hashes.compact!
+
+    new_hash = deleting_from.dup
+    deleting_from.each do |key, value|
+      if value.is_a? Hash
+        # Recurse
+        new_at_key = deep_delete_matches(deleting_from[key], *(checking_hashes.map {|h| h[key]}))
+        if new_at_key.empty?
+          new_hash.delete key
+        else
+          new_hash[key] = new_at_key
+        end
+      else
+        if checking_hashes.any? {|h| h.include? key}
+          new_hash.delete key
+        end
+      end
+    end
+    new_hash
+  end
+
+  def self.load_translations_merged(*locales)
+    @loaded_merges ||= {}
+    @loaded_merges[locales.join('-')] ||= begin
+      all_translations = {}
+      merged_translations = {}
+      loaded_locales = []
+
+      locales.map(&:to_s).each do |locale|
+        all_translations[locale] = JsLocaleHelper.load_translations locale
+        merged_translations[locale] = deep_delete_matches(all_translations[locale][locale], *loaded_locales.map { |l| merged_translations[l] })
+        loaded_locales << locale
+      end
+      merged_translations
+    end
+  end
+
+  def self.output_locale(locale)
+    locale_sym = locale.to_sym
     locale_str = locale.to_s
 
-    # load default translations
-    translations ||= YAML::load(File.open("#{Rails.root}/config/locales/client.#{locale_str}.yml"))
-    # load plugins translations
-    plugin_translations = {}
-    Dir["#{Rails.root}/plugins/*/config/locales/client.#{locale_str}.yml"].each do |file|
-      plugin_translations.deep_merge! YAML::load(File.open(file))
-    end
-    # merge translations (plugin translations overwrite default translations)
-    translations[locale_str]['js'].deep_merge!(plugin_translations[locale_str]['js']) if translations[locale_str] && plugin_translations[locale_str] && plugin_translations[locale_str]['js']
+    current_locale = I18n.locale
+    I18n.locale = locale_sym
 
-    # We used to split the admin versus the client side, but it's much simpler to just
-    # include both for now due to the small size of the admin section.
-    #
-    # For now, let's leave it split out in the translation file in case we want to split
-    # it again later, so we'll merge the JSON ourselves.
-    admin_contents = translations[locale_str].delete('admin_js')
-    translations[locale_str]['js'].merge!(admin_contents) if admin_contents.present?
-    translations[locale_str]['js'].deep_merge!(plugin_translations[locale_str]['admin_js']) if translations[locale_str] && plugin_translations[locale_str] && plugin_translations[locale_str]['admin_js']
+    site_locale = SiteSetting.default_locale.to_sym
+
+    if Rails.env.development?
+      translations = load_translations(locale_sym, force: true)
+    else
+      if locale_sym == :en
+        translations = load_translations(locale_sym)
+      elsif locale_sym == site_locale || site_locale == :en
+        translations = load_translations_merged(locale_sym, :en)
+      else
+        translations = load_translations_merged(locale_sym, site_locale, :en)
+      end
+    end
+
     message_formats = strip_out_message_formats!(translations[locale_str]['js'])
 
     result = generate_message_format(message_formats, locale_str)
@@ -50,53 +119,60 @@ module JsLocaleHelper
 
   def self.moment_format_function(name)
     format = I18n.t("dates.#{name}")
-    result = "moment.fn.#{name.camelize(:lower)} = function(){ return this.format('#{format}'); };\n"
+    "moment.fn.#{name.camelize(:lower)} = function(){ return this.format('#{format}'); };\n"
   end
 
   def self.moment_locale(locale_str)
+    # moment.js uses a different naming scheme for locale files
+    locale_str = locale_str.tr('_', '-').downcase
     filename = Rails.root + "lib/javascripts/moment_locale/#{locale_str}.js"
+
+    unless File.exists?(filename)
+      # try the language without the territory
+      locale_str = locale_str.partition('-').first
+      filename = Rails.root + "lib/javascripts/moment_locale/#{locale_str}.js"
+    end
+
     if File.exists?(filename)
       File.read(filename) << "\n"
     end || ""
   end
 
   def self.generate_message_format(message_formats, locale_str)
-    formats = message_formats.map{|k,v| k.inspect << " : " << compile_message_format(locale_str ,v)}.join(" , ")
 
     result = "MessageFormat = {locale: {}};\n"
 
+    formats = message_formats.map{|k,v| k.inspect << " : " << compile_message_format(locale_str,v)}.join(", ")
+    result << "I18n._compiledMFs = {#{formats}};\n\n"
+
     filename = Rails.root + "lib/javascripts/locale/#{locale_str}.js"
     filename = Rails.root + "lib/javascripts/locale/en.js" unless File.exists?(filename)
+    result << File.read(filename) << "\n\n"
 
-    result << File.read(filename) << "\n"
+    result << File.read("#{Rails.root}/lib/javascripts/messageformat-lookup.js")
 
-    result << "I18n.messageFormat = (function(formats){
-      var f = formats;
-      return function(key, options) {
-        var fn = f[key];
-        if(fn){
-          try {
-            return fn(options);
-          } catch(err) {
-            return err.message;
-          }
-        } else {
-          return 'Missing Key: ' + key
-        }
-        return f[key](options);
-      };
-    })({#{formats}});"
+    result
+  end
+
+  @mutex = Mutex.new
+  def self.with_context
+    @mutex.synchronize do
+      yield @ctx ||= begin
+               ctx = MiniRacer::Context.new
+               ctx.load(Rails.root + 'lib/javascripts/messageformat.js')
+               ctx
+             end
+    end
   end
 
   def self.compile_message_format(locale, format)
-    ctx = V8::Context.new
-    ctx.load(Rails.root + 'lib/javascripts/messageformat.js')
-    path = Rails.root + "lib/javascripts/locale/#{locale}.js"
-    ctx.load(path) if File.exists?(path)
-    ctx.eval("mf = new MessageFormat('#{locale}');")
-    ctx.eval("mf.precompile(mf.parse(#{format.inspect}))")
-
-  rescue V8::Error => e
+    with_context do |ctx|
+      path = Rails.root + "lib/javascripts/locale/#{locale}.js"
+      ctx.load(path) if File.exists?(path)
+      ctx.eval("mf = new MessageFormat('#{locale}');")
+      ctx.eval("mf.precompile(mf.parse(#{format.inspect}))")
+    end
+  rescue MiniRacer::EvalError => e
     message = "Invalid Format: " << e.message
     "function(){ return #{message.inspect};}"
   end

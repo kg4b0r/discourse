@@ -318,13 +318,26 @@
 
   // Build default order from insertion order.
   Markdown.buildBlockOrder = function(d) {
-    var ord = [];
+    var ord = [[]];
     for ( var i in d ) {
       if ( i === "__order__" || i === "__call__" )
         continue;
-      ord.push( i );
+
+      var priority = d[i].priority || 0;
+      ord[priority] = ord[priority] || [];
+      ord[priority].push( i );
     }
-    d.__order__ = ord;
+
+    var flattend = [];
+    for (i=ord.length-1; i>=0; i--){
+      if (ord[i]) {
+        for (var j=0; j<ord[i].length; j++){
+          flattend.push(ord[i][j]);
+        }
+      }
+    }
+
+    d.__order__ = flattend;
   };
 
   // Build patterns for inline matcher
@@ -415,6 +428,7 @@
 
     if ( attrs && attrs.references )
       refs = attrs.references;
+
 
     var html = convert_tree_to_html( input, refs , options );
     merge_text_nodes( html );
@@ -825,7 +839,6 @@
         // TODO: Cache this regexp for certain depths.
         // Create a regexp suitable for matching an li for a given stack depth
         function regex_for_depth( depth ) {
-
           return new RegExp(
             // m[1] = indent, m[2] = list_type
             "(?:^(" + indent_re + "{0," + depth + "} {0,3})(" + any_list + ")\\s+)|" +
@@ -871,8 +884,11 @@
               replace = new RegExp("^" + indent_re + "{" + depth + "}", "gm"),
               ret = [];
 
+
           while ( blocks.length > 0 ) {
-            if ( re.exec( blocks[0] ) ) {
+            // HACK: Fixes a v8 issue
+            test = blocks[0].replace(/^ {8,}/, '        ');
+            if ( re.exec( test ) ) {
               var b = blocks.shift(),
                   // Now remove that indent
                   x = b.replace( replace, "");
@@ -1185,6 +1201,16 @@
           res = this.dialect.inline[ m[1] ].call(
                     this,
                     text.substr( m.index ), m, previous_nodes || [] );
+
+          // If no inline code executed, fallback
+          if (!res) {
+            var fn = this.dialect.inline[m[1][0]];
+            if (fn) {
+              res = fn.call(
+                    this,
+                    text.substr( m.index ), m, previous_nodes || [] );
+            }
+          }
         }
         // Default for now to make dev easier. just slurp special and output it.
         res = res || [ m[1].length, m[1] ];

@@ -1,13 +1,13 @@
 # encoding: UTF-8
 
-require 'spec_helper'
+require 'rails_helper'
 
 describe SpamRulesEnforcer do
 
   describe 'auto-blocking users based on flagging' do
     before do
       SiteSetting.stubs(:flags_required_to_hide_post).returns(0) # never
-      SiteSetting.stubs(:num_flags_to_block_new_user).returns(2)
+      SiteSetting.stubs(:num_spam_flags_to_block_new_user).returns(2)
       SiteSetting.stubs(:num_users_to_block_new_user).returns(2)
     end
 
@@ -41,7 +41,7 @@ describe SpamRulesEnforcer do
 
           Invariant { expect(Guardian.new(spammer).can_create_topic?(nil)).to be false }
           Invariant { expect{PostCreator.create(spammer, {title: 'limited time offer for you', raw: 'better buy this stuff ok', archetype_id: 1})}.to raise_error(Discourse::InvalidAccess) }
-          Invariant { expect{PostCreator.create(spammer, {topic_id: another_topic.id, raw: 'my reply is spam in your topic', archetype_id: 1})}.to raise_error(Discourse::InvalidAccess) }
+          Invariant { expect(PostCreator.create(spammer, {topic_id: another_topic.id, raw: 'my reply is spam in your topic', archetype_id: 1})).to eq(nil) }
 
           Then { expect(spammer.reload).to be_blocked }
           And  { expect(spam_post.reload).to be_hidden }

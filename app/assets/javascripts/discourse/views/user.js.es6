@@ -1,4 +1,3 @@
-export default Ember.View.extend(Discourse.ScrollTop, {
-  templateName: 'user/user',
-  userBinding: 'controller.content'
-});
+import ScrollTop from 'discourse/mixins/scroll-top';
+
+export default Ember.View.extend(ScrollTop);

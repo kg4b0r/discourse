@@ -1,6 +1,13 @@
 require 'cache'
 require_dependency 'plugin/instance'
 require_dependency 'auth/default_current_user_provider'
+require_dependency 'version'
+
+# Prevents errors with reloading dev with conditional includes
+if Rails.env.development?
+  require_dependency 'file_store/s3_store'
+  require_dependency 'file_store/local_store'
+end
 
 module Discourse
 
@@ -15,7 +22,7 @@ module Discourse
   # error_context() method in Jobs::Base to pass the job arguments and any
   # other desired context.
   # See app/jobs/base.rb for the error_context function.
-  def self.handle_exception(ex, context = {}, parent_logger = nil)
+  def self.handle_job_exception(ex, context = {}, parent_logger = nil)
     context ||= {}
     parent_logger ||= SidekiqExceptionHandler
 
@@ -27,48 +34,44 @@ module Discourse
   end
 
   # Expected less matches than what we got in a find
-  class TooManyMatches < Exception; end
+  class TooManyMatches < StandardError; end
 
   # When they try to do something they should be logged in for
-  class NotLoggedIn < Exception; end
+  class NotLoggedIn < StandardError; end
 
   # When the input is somehow bad
-  class InvalidParameters < Exception; end
+  class InvalidParameters < StandardError; end
 
   # When they don't have permission to do something
-  class InvalidAccess < Exception; end
-
-  # When something they want is not found
-  class NotFound < Exception; end
-
-  # When a setting is missing
-  class SiteSettingMissing < Exception; end
-
-  # When ImageMagick is missing
-  class ImageMagickMissing < Exception; end
-
-  class InvalidPost < Exception; end
-
-  # When read-only mode is enabled
-  class ReadOnly < Exception; end
-
-  # Cross site request forgery
-  class CSRF < Exception; end
-
-  def self.filters
-    @filters ||= [:latest, :unread, :new, :starred, :read, :posted]
+  class InvalidAccess < StandardError
+    attr_reader :obj
+    def initialize(msg=nil, obj=nil)
+      super(msg)
+      @obj = obj
+    end
   end
 
-  def self.feed_filters
-    @feed_filters ||= [:latest]
+  # When something they want is not found
+  class NotFound < StandardError; end
+
+  # When a setting is missing
+  class SiteSettingMissing < StandardError; end
+
+  # When ImageMagick is missing
+  class ImageMagickMissing < StandardError; end
+
+  # When read-only mode is enabled
+  class ReadOnly < StandardError; end
+
+  # Cross site request forgery
+  class CSRF < StandardError; end
+
+  def self.filters
+    @filters ||= [:latest, :unread, :new, :read, :posted, :bookmarks]
   end
 
   def self.anonymous_filters
     @anonymous_filters ||= [:latest, :top, :categories]
-  end
-
-  def self.logged_in_filters
-    @logged_in_filters ||= Discourse.filters - Discourse.anonymous_filters
   end
 
   def self.top_menu_items
@@ -79,13 +82,60 @@ module Discourse
     @anonymous_top_menu_items ||= Discourse.anonymous_filters + [:category, :categories, :top]
   end
 
+  PIXEL_RATIOS ||= [1, 1.5, 2, 3]
+
+  def self.avatar_sizes
+    # TODO: should cache these when we get a notification system for site settings
+    set = Set.new
+
+    SiteSetting.avatar_sizes.split("|").map(&:to_i).each do |size|
+      PIXEL_RATIOS.each do |pixel_ratio|
+        set << size * pixel_ratio
+      end
+    end
+
+    set
+  end
+
   def self.activate_plugins!
-    @plugins = Plugin::Instance.find_all("#{Rails.root}/plugins")
-    @plugins.each { |plugin| plugin.activate! }
+    all_plugins = Plugin::Instance.find_all("#{Rails.root}/plugins")
+
+    @plugins = []
+    all_plugins.each do |p|
+      v = p.metadata.required_version || Discourse::VERSION::STRING
+      if Discourse.has_needed_version?(Discourse::VERSION::STRING, v)
+        p.activate!
+        @plugins << p
+      else
+        STDERR.puts "Could not activate #{p.metadata.name}, discourse does not meet required version (#{v})"
+      end
+    end
+  end
+
+  def self.last_read_only
+    @last_read_only ||= {}
+  end
+
+  def self.recently_readonly?
+    read_only = last_read_only[$redis.namespace]
+    return false unless read_only
+    read_only > 15.seconds.ago
+  end
+
+  def self.received_readonly!
+    last_read_only[$redis.namespace] = Time.zone.now
+  end
+
+  def self.clear_readonly!
+    last_read_only[$redis.namespace] = nil
+  end
+
+  def self.disabled_plugin_names
+    plugins.select { |p| !p.enabled? }.map(&:name)
   end
 
   def self.plugins
-    @plugins
+    @plugins ||= []
   end
 
   def self.assets_digest
@@ -114,12 +164,10 @@ module Discourse
 
   def self.auth_providers
     providers = []
-    if plugins
-      plugins.each do |p|
-        next unless p.auth_providers
-        p.auth_providers.each do |prov|
-          providers << prov
-        end
+    plugins.each do |p|
+      next unless p.auth_providers
+      p.auth_providers.each do |prov|
+        providers << prov
       end
     end
     providers
@@ -131,56 +179,63 @@ module Discourse
 
   # Get the current base URL for the current site
   def self.current_hostname
-    if SiteSetting.force_hostname.present?
-      SiteSetting.force_hostname
-    else
-      RailsMultisite::ConnectionManagement.current_hostname
-    end
+    SiteSetting.force_hostname.presence || RailsMultisite::ConnectionManagement.current_hostname
   end
 
   def self.base_uri(default_value = "")
-    if !ActionController::Base.config.relative_url_root.blank?
-      ActionController::Base.config.relative_url_root
-    else
-      default_value
-    end
+    ActionController::Base.config.relative_url_root.presence || default_value
+  end
+
+  def self.base_protocol
+    SiteSetting.force_https? ? "https" : "http"
   end
 
   def self.base_url_no_prefix
-    default_port = 80
-    protocol = "http"
-
-    if SiteSetting.use_https?
-      protocol = "https"
-      default_port = 443
-    end
-
-    result = "#{protocol}://#{current_hostname}"
-
-    port = SiteSetting.port.present? && SiteSetting.port.to_i > 0 ? SiteSetting.port.to_i : default_port
-
-    result << ":#{SiteSetting.port}" if port != default_port
-    result
+    default_port = SiteSetting.force_https? ? 443 : 80
+    url = "#{base_protocol}://#{current_hostname}"
+    url << ":#{SiteSetting.port}" if SiteSetting.port.to_i > 0 && SiteSetting.port.to_i != default_port
+    url
   end
 
   def self.base_url
-    return base_url_no_prefix + base_uri
+    base_url_no_prefix + base_uri
   end
 
-  def self.enable_readonly_mode
-    $redis.set readonly_mode_key, 1
+  READONLY_MODE_KEY_TTL ||= 60
+  READONLY_MODE_KEY ||= 'readonly_mode'.freeze
+  USER_READONLY_MODE_KEY ||= 'readonly_mode:user'.freeze
+
+  def self.enable_readonly_mode(user_enabled: false)
+    if user_enabled
+      $redis.set(USER_READONLY_MODE_KEY, 1)
+    else
+      $redis.setex(READONLY_MODE_KEY, READONLY_MODE_KEY_TTL, 1)
+      keep_readonly_mode
+    end
+
     MessageBus.publish(readonly_channel, true)
     true
   end
 
-  def self.disable_readonly_mode
-    $redis.del readonly_mode_key
+  def self.keep_readonly_mode
+    # extend the expiry by 1 minute every 30 seconds
+    Thread.new do
+      while readonly_mode?
+        $redis.expire(READONLY_MODE_KEY, READONLY_MODE_KEY_TTL)
+        sleep 30.seconds
+      end
+    end
+  end
+
+  def self.disable_readonly_mode(user_enabled: false)
+    key = user_enabled ? USER_READONLY_MODE_KEY : READONLY_MODE_KEY
+    $redis.del(key)
     MessageBus.publish(readonly_channel, false)
     true
   end
 
   def self.readonly_mode?
-    !!$redis.get(readonly_mode_key)
+    recently_readonly? || !!$redis.get(READONLY_MODE_KEY) || !!$redis.get(USER_READONLY_MODE_KEY)
   end
 
   def self.request_refresh!
@@ -201,7 +256,7 @@ module Discourse
     begin
       $git_version ||= `git rev-parse HEAD`.strip
     rescue
-      $git_version = "unknown"
+      $git_version = Discourse::VERSION::STRING
     end
   end
 
@@ -218,13 +273,13 @@ module Discourse
   # Either returns the site_contact_username user or the first admin.
   def self.site_contact_user
     user = User.find_by(username_lower: SiteSetting.site_contact_username.downcase) if SiteSetting.site_contact_username.present?
-    user ||= User.admins.real.order(:id).first
+    user ||= (system_user || User.admins.real.order(:id).first)
   end
 
-  SYSTEM_USER_ID = -1 unless defined? SYSTEM_USER_ID
+  SYSTEM_USER_ID ||= -1
 
   def self.system_user
-    User.find_by(id: SYSTEM_USER_ID)
+    @system_user ||= User.find_by(id: SYSTEM_USER_ID)
   end
 
   def self.store
@@ -249,10 +304,6 @@ module Discourse
     Rails.configuration.action_controller.asset_host
   end
 
-  def self.readonly_mode_key
-    "readonly_mode"
-  end
-
   def self.readonly_channel
     "/site/read-only"
   end
@@ -261,6 +312,7 @@ module Discourse
   # after fork, otherwise Discourse will be
   # in a bad state
   def self.after_fork
+    # note: all this reconnecting may no longer be needed per https://github.com/redis/redis-rb/pull/414
     current_db = RailsMultisite::ConnectionManagement.current_db
     RailsMultisite::ConnectionManagement.establish_connection(db: current_db)
     MessageBus.after_fork
@@ -273,26 +325,42 @@ module Discourse
     # re-establish
     Sidekiq.redis = sidekiq_redis_config
     start_connection_reaper
+
+    # in case v8 was initialized we want to make sure it is nil
+    PrettyText.reset_context
     nil
   end
 
-  def self.start_connection_reaper(interval=30, age=30)
+  def self.start_connection_reaper
+    return if GlobalSetting.connection_reaper_age < 1 ||
+              GlobalSetting.connection_reaper_interval < 1
+
     # this helps keep connection counts in check
     Thread.new do
       while true
-        sleep interval
-        pools = []
-        ObjectSpace.each_object(ActiveRecord::ConnectionAdapters::ConnectionPool){|pool| pools << pool}
-
-        pools.each do |pool|
-          pool.drain(age.seconds)
+        begin
+          sleep GlobalSetting.connection_reaper_interval
+          reap_connections(GlobalSetting.connection_reaper_age, GlobalSetting.connection_reaper_max_age)
+        rescue => e
+          Discourse.handle_exception(e, {message: "Error reaping connections"})
         end
       end
     end
   end
 
+  def self.reap_connections(idle, max_age)
+    pools = []
+    ObjectSpace.each_object(ActiveRecord::ConnectionAdapters::ConnectionPool){|pool| pools << pool}
+
+    pools.each do |pool|
+      pool.drain(idle.seconds, max_age.seconds)
+    end
+  end
+
   def self.sidekiq_redis_config
-    { url: $redis.url, namespace: 'sidekiq' }
+    conf = GlobalSetting.redis_config.dup
+    conf[:namespace] = 'sidekiq'
+    conf
   end
 
   def self.static_doc_topic_ids

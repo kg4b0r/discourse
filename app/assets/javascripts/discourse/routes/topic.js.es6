@@ -1,12 +1,15 @@
-var isTransitioning = false,
+import DiscourseURL from 'discourse/lib/url';
+
+let isTransitioning = false,
     scheduledReplace = null,
-    lastScrollPos = null,
-    SCROLL_DELAY = 500;
+    lastScrollPos = null;
 
-import ShowFooter from "discourse/mixins/show-footer";
+const SCROLL_DELAY = 500;
 
-var TopicRoute = Discourse.Route.extend(ShowFooter, {
-  redirect: function() { return this.redirectIfLoginRequired(); },
+import showModal from 'discourse/lib/show-modal';
+
+const TopicRoute = Discourse.Route.extend({
+  redirect() { return this.redirectIfLoginRequired(); },
 
   queryParams: {
     filter: { replace: true },
@@ -14,16 +17,17 @@ var TopicRoute = Discourse.Route.extend(ShowFooter, {
     show_deleted: { replace: true }
   },
 
-  titleToken: function() {
-    var model = this.modelFor('topic');
+  titleToken() {
+    const model = this.modelFor('topic');
     if (model) {
-      var result = model.get('title'),
-          cat = model.get('category');
+      const result = model.get('title'),
+            cat = model.get('category');
 
-      if (cat && !cat.get('isUncategorized')) {
-        var catName = cat.get('name'),
-            parentCategory = cat.get('parentCategory');
+      // Only display uncategorized in the title tag if it was renamed
+      if (cat && !(cat.get('isUncategorizedCategory') && cat.get('name').toLowerCase() === "uncategorized")) {
+        let catName = cat.get('name');
 
+        const parentCategory = cat.get('parentCategory');
         if (parentCategory) {
           catName = parentCategory.get('name') + " / " + catName;
         }
@@ -36,72 +40,68 @@ var TopicRoute = Discourse.Route.extend(ShowFooter, {
 
   actions: {
 
-    showTopicAdminMenu: function() {
-      this.controllerFor("topic-admin-menu").send("show");
+    showFlags(model) {
+      showModal('flag', { model });
+      this.controllerFor('flag').setProperties({ selected: null, flagTopic: false });
     },
 
-    showFlags: function(post) {
-      Discourse.Route.showModal(this, 'flag', post);
-      this.controllerFor('flag').setProperties({ selected: null });
-    },
-
-    showFlagTopic: function(topic) {
-      Discourse.Route.showModal(this, 'flag', topic);
+    showFlagTopic(model) {
+      showModal('flag',  { model });
       this.controllerFor('flag').setProperties({ selected: null, flagTopic: true });
     },
 
-    showAutoClose: function() {
-      Discourse.Route.showModal(this, 'editTopicAutoClose', this.modelFor('topic'));
+    showAutoClose() {
+      showModal('edit-topic-auto-close', { model: this.modelFor('topic') });
       this.controllerFor('modal').set('modalClass', 'edit-auto-close-modal');
     },
 
-    showInvite: function() {
-      Discourse.Route.showModal(this, 'invite', this.modelFor('topic'));
+    showChangeTimestamp() {
+      showModal('change-timestamp', { model: this.modelFor('topic'), title: 'topic.change_timestamp.title' });
+    },
+
+    showFeatureTopic() {
+      showModal('featureTopic', { model: this.modelFor('topic'), title: 'topic.feature_topic.title' });
+      this.controllerFor('modal').set('modalClass', 'feature-topic-modal');
+      this.controllerFor('feature_topic').reset();
+    },
+
+    showInvite() {
+      showModal('invite', { model: this.modelFor('topic') });
       this.controllerFor('invite').reset();
     },
 
-    showPrivateInvite: function() {
-      Discourse.Route.showModal(this, 'invitePrivate', this.modelFor('topic'));
-      this.controllerFor('invitePrivate').setProperties({
-        email: null,
-        error: false,
-        saving: false,
-        finished: false
-      });
-    },
-
-    showHistory: function(post) {
-      Discourse.Route.showModal(this, 'history', post);
-      this.controllerFor('history').refresh(post.get("id"), "latest");
+    showHistory(model) {
+      showModal('history', { model });
+      this.controllerFor('history').refresh(model.get("id"), "latest");
+      this.controllerFor('history').set('post', model);
       this.controllerFor('modal').set('modalClass', 'history-modal');
     },
 
-    showRawEmail: function(post) {
-      Discourse.Route.showModal(this, 'raw-email', post);
-      this.controllerFor('raw_email').loadRawEmail(post.get("id"));
+    showRawEmail(model) {
+      showModal('raw-email', { model });
+      this.controllerFor('raw_email').loadRawEmail(model.get("id"));
     },
 
-    mergeTopic: function() {
-      Discourse.Route.showModal(this, 'mergeTopic', this.modelFor('topic'));
+    mergeTopic() {
+      showModal('merge-topic', { model: this.modelFor('topic'), title: 'topic.merge_topic.title' });
     },
 
-    splitTopic: function() {
-      Discourse.Route.showModal(this, 'split-topic', this.modelFor('topic'));
+    splitTopic() {
+      showModal('split-topic', { model: this.modelFor('topic') });
     },
 
-    changeOwner: function() {
-      Discourse.Route.showModal(this, 'changeOwner', this.modelFor('topic'));
+    changeOwner() {
+      showModal('change-owner', { model: this.modelFor('topic'), title: 'topic.change_owner.title' });
     },
 
     // Use replaceState to update the URL once it changes
-    postChangedRoute: function(currentPost) {
-
+    postChangedRoute(currentPost) {
       // do nothing if we are transitioning to another route
-      if (isTransitioning || Discourse.TopicRoute.disableReplaceState) { return; }
+      if (isTransitioning || TopicRoute.disableReplaceState) { return; }
 
-      var topic = this.modelFor('topic');
+      const topic = this.modelFor('topic');
       if (topic && currentPost) {
-        var postUrl = topic.get('url');
+        let postUrl = topic.get('url');
         if (currentPost > 1) { postUrl += "/" + currentPost; }
 
         Em.run.cancel(scheduledReplace);
@@ -110,12 +110,12 @@ var TopicRoute = Discourse.Route.extend(ShowFooter, {
       }
     },
 
-    didTransition: function() {
+    didTransition() {
       this.controllerFor("topic")._showFooter();
       return true;
     },
 
-    willTransition: function() {
+    willTransition() {
       this._super();
       this.controllerFor("quote-button").deselectText();
       Em.run.cancel(scheduledReplace);
@@ -126,22 +126,22 @@ var TopicRoute = Discourse.Route.extend(ShowFooter, {
 
   // replaceState can be very slow on Android Chrome. This function debounces replaceState
   // within a topic until scrolling stops
-  _replaceUnlessScrolling: function(url) {
-    var currentPos = parseInt($(document).scrollTop(), 10);
+  _replaceUnlessScrolling(url) {
+    const currentPos = parseInt($(document).scrollTop(), 10);
     if (currentPos === lastScrollPos) {
-      Discourse.URL.replaceState(url);
+      DiscourseURL.replaceState(url);
       return;
     }
     lastScrollPos = currentPos;
     scheduledReplace = Em.run.later(this, '_replaceUnlessScrolling', url, SCROLL_DELAY);
   },
 
-  setupParams: function(topic, params) {
-    var postStream = topic.get('postStream');
+  setupParams(topic, params) {
+    const postStream = topic.get('postStream');
     postStream.set('summary', Em.get(params, 'filter') === 'summary');
     postStream.set('show_deleted', !!Em.get(params, 'show_deleted'));
 
-    var usernames = Em.get(params, 'username_filters'),
+    const usernames = Em.get(params, 'username_filters'),
         userFilters = postStream.get('userFilters');
 
     userFilters.clear();
@@ -152,85 +152,69 @@ var TopicRoute = Discourse.Route.extend(ShowFooter, {
     return topic;
   },
 
-  model: function(params, transition) {
-    var queryParams = transition.queryParams;
+  model(params, transition) {
+    const queryParams = transition.queryParams;
 
-    var topic = this.modelFor('topic');
+    let topic = this.modelFor('topic');
     if (topic && (topic.get('id') === parseInt(params.id, 10))) {
       this.setupParams(topic, queryParams);
-      // If we have the existing model, refresh it
-      return topic.get('postStream').refresh().then(function() {
-        return topic;
-      });
+      return topic;
     } else {
-      return this.setupParams(Discourse.Topic.create(_.omit(params, 'username_filters', 'filter')), queryParams);
+      topic = this.store.createRecord('topic', _.omit(params, 'username_filters', 'filter'));
+      return this.setupParams(topic, queryParams);
     }
   },
 
-  activate: function() {
+  activate() {
     this._super();
     isTransitioning = false;
 
-    var topic = this.modelFor('topic');
-    Discourse.Session.currentProp('lastTopicIdViewed', parseInt(topic.get('id'), 10));
-    this.controllerFor('search').set('searchContext', topic.get('searchContext'));
+    const topic = this.modelFor('topic');
+    this.session.set('lastTopicIdViewed', parseInt(topic.get('id'), 10));
   },
 
-  deactivate: function() {
+  deactivate() {
     this._super();
 
-    // Clear the search context
-    this.controllerFor('search').set('searchContext', null);
+    this.searchService.set('searchContext', null);
     this.controllerFor('user-card').set('visible', false);
 
-    var topicController = this.controllerFor('topic'),
-        postStream = topicController.get('postStream');
+    const topicController = this.controllerFor('topic');
+    const postStream = topicController.get('model.postStream');
+
     postStream.cancelFilter();
 
     topicController.set('multiSelect', false);
     topicController.unsubscribe();
     this.controllerFor('composer').set('topic', null);
-    Discourse.ScreenTrack.current().stop();
+    this.screenTrack.stop();
 
-    var headerController;
-    if (headerController = this.controllerFor('header')) {
-      headerController.set('topic', null);
-      headerController.set('showExtraInfo', false);
-    }
+    this.appEvents.trigger('header:hide-topic');
   },
 
-  setupController: function(controller, model) {
+  setupController(controller, model) {
     // In case we navigate from one topic directly to another
     isTransitioning = false;
 
-    if (Discourse.Mobile.mobileView) {
-      // close the dropdowns on mobile
-      $('.d-dropdown').hide();
-      $('header ul.icons li').removeClass('active');
-      $('[data-toggle="dropdown"]').parent().removeClass('open');
-    }
-
     controller.setProperties({
-      model: model,
-      editingTopic: false
+      model,
+      editingTopic: false,
+      firstPostExpanded: false
     });
 
-    Discourse.TopicRoute.trigger('setupTopicController', this);
+    TopicRoute.trigger('setupTopicController', this);
 
-    this.controllerFor('header').setProperties({
-      topic: model,
-      showExtraInfo: false
-    });
+    this.searchService.set('searchContext', model.get('searchContext'));
 
-    this.controllerFor('topic-admin-menu').set('model', model);
+    // close the multi select when switching topics
+    controller.set('multiSelect', false);
 
     this.controllerFor('composer').set('topic', model);
-    Discourse.TopicTrackingState.current().trackIncoming('all');
+    this.topicTrackingState.trackIncoming('all');
     controller.subscribe();
 
-    this.controllerFor('topic-progress').set('model', model);
     // We reset screen tracking every time a topic is entered
-    Discourse.ScreenTrack.current().start(model.get('id'), controller);
+    this.screenTrack.start(model.get('id'), controller);
   }
 
 });

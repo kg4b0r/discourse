@@ -1,7 +1,12 @@
-//= require list-view
+//= require_tree ./ember-addons
 //= require admin/models/user-field
-//= require admin/controllers/admin-email-skipped
-//= require admin/controllers/change-site-customization-details
+//= require admin/models/site-setting
+//= require admin/models/screened-ip-address
+//= require admin/models/api-key
+//= require admin/models/tl3-requirements
+//= require admin/models/admin-user
+//= require_tree ./admin/models
+//= require discourse/lib/export-result
 //= require_tree ./admin
 
 //= require resumable.js

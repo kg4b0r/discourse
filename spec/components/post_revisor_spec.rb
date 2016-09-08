@@ -1,11 +1,60 @@
-require 'spec_helper'
+require 'rails_helper'
 require 'post_revisor'
 
 describe PostRevisor do
 
   let(:topic) { Fabricate(:topic) }
   let(:newuser) { Fabricate(:newuser) }
-  let(:post_args) { {user: newuser, topic: topic} }
+  let(:post_args) { { user: newuser, topic: topic } }
+
+  context 'TopicChanges' do
+    let(:tc) {
+      topic.reload
+      PostRevisor::TopicChanges.new(topic, topic.user)
+    }
+
+    it 'provides a guardian' do
+      expect(tc.guardian).to be_an_instance_of Guardian
+    end
+
+    it 'tracks changes properly' do
+      expect(tc.diff).to eq({})
+
+      # it remembers changes we tell it to
+      tc.record_change('height', '180cm', '170cm')
+      expect(tc.diff['height']).to eq(['180cm', '170cm'])
+
+      # it works with arrays of values
+      tc.record_change('colors', nil, ['red', 'blue'])
+      expect(tc.diff['colors']).to eq([nil, ['red', 'blue']])
+
+      # it does not record changes to the same val
+      tc.record_change('wat', 'js', 'js')
+      expect(tc.diff['wat']).to be_nil
+
+      tc.record_change('tags', ['a', 'b'], ['a', 'b'])
+      expect(tc.diff['tags']).to be_nil
+
+    end
+  end
+
+  context 'revise wiki' do
+
+    before do
+      # There used to be a bug where wiki changes were considered posting "too similar"
+      # so this is enabled and checked
+      $redis.delete_prefixed('unique-post')
+      SiteSetting.unique_posts_mins = 10
+    end
+
+    it 'allows the user to change it to a wiki' do
+      pc = PostCreator.new(newuser, topic_id: topic.id, raw: 'this is a post that will become a wiki')
+      post = pc.create
+      expect(post.revise(post.user, wiki: true)).to be_truthy
+      post.reload
+      expect(post.wiki).to be_truthy
+    end
+  end
 
   context 'revise' do
     let(:post) { Fabricate(:post, post_args) }
@@ -15,24 +64,40 @@ describe PostRevisor do
 
     describe 'with the same body' do
       it "doesn't change version" do
-        lambda {
-          subject.revise!(post.user, { raw: post.raw }).should == false
+        expect {
+          expect(subject.revise!(post.user, { raw: post.raw })).to eq(false)
           post.reload
-        }.should_not change(post, :version)
+        }.not_to change(post, :version)
       end
     end
 
     describe 'ninja editing' do
       it 'correctly applies edits' do
-        SiteSetting.ninja_edit_window = 1.minute.to_i
+        SiteSetting.stubs(:editing_grace_period).returns(1.minute)
+
         subject.revise!(post.user, { raw: 'updated body' }, revised_at: post.updated_at + 10.seconds)
         post.reload
 
-        post.version.should == 1
-        post.public_version.should == 1
-        post.revisions.size.should == 0
-        post.last_version_at.should == first_version_at
-        subject.category_changed.should be_blank
+        expect(post.version).to eq(1)
+        expect(post.public_version).to eq(1)
+        expect(post.revisions.size).to eq(0)
+        expect(post.last_version_at).to eq(first_version_at)
+        expect(subject.category_changed).to be_blank
+      end
+
+      it "doesn't create a new version" do
+        SiteSetting.stubs(:editing_grace_period).returns(1.minute)
+
+        # making a revision
+        subject.revise!(post.user, { raw: 'updated body' }, revised_at: post.updated_at + SiteSetting.editing_grace_period + 1.seconds)
+        # "roll back"
+        subject.revise!(post.user, { raw: 'Hello world' }, revised_at: post.updated_at + SiteSetting.editing_grace_period + 2.seconds)
+
+        post.reload
+
+        expect(post.version).to eq(1)
+        expect(post.public_version).to eq(1)
+        expect(post.revisions.size).to eq(0)
       end
     end
 
@@ -41,26 +106,26 @@ describe PostRevisor do
       let!(:revised_at) { post.updated_at + 2.minutes }
 
       before do
-        SiteSetting.stubs(:ninja_edit_window).returns(1.minute.to_i)
+        SiteSetting.stubs(:editing_grace_period).returns(1.minute.to_i)
         subject.revise!(post.user, { raw: 'updated body' }, revised_at: revised_at)
         post.reload
       end
 
       it "doesn't update a category" do
-        subject.category_changed.should be_blank
+        expect(subject.category_changed).to be_blank
       end
 
       it 'updates the versions' do
-        post.version.should == 2
-        post.public_version.should == 2
+        expect(post.version).to eq(2)
+        expect(post.public_version).to eq(2)
       end
 
       it 'creates a new revision' do
-        post.revisions.size.should == 1
+        expect(post.revisions.size).to eq(1)
       end
 
       it "updates the last_version_at" do
-        post.last_version_at.to_i.should == revised_at.to_i
+        expect(post.last_version_at.to_i).to eq(revised_at.to_i)
       end
 
       describe "new edit window" do
@@ -71,16 +136,16 @@ describe PostRevisor do
         end
 
         it "doesn't create a new version if you do another" do
-          post.version.should == 2
-          post.public_version.should == 2
+          expect(post.version).to eq(2)
+          expect(post.public_version).to eq(2)
         end
 
         it "doesn't change last_version_at" do
-          post.last_version_at.to_i.should == revised_at.to_i
+          expect(post.last_version_at.to_i).to eq(revised_at.to_i)
         end
 
         it "doesn't update a category" do
-          subject.category_changed.should be_blank
+          expect(subject.category_changed).to be_blank
         end
 
         context "after second window" do
@@ -93,12 +158,12 @@ describe PostRevisor do
           end
 
           it "does create a new version after the edit window" do
-            post.version.should == 3
-            post.public_version.should == 3
+            expect(post.version).to eq(3)
+            expect(post.public_version).to eq(3)
           end
 
           it "does create a new version after the edit window" do
-            post.last_version_at.to_i.should == new_revised_at.to_i
+            expect(post.last_version_at.to_i).to eq(new_revised_at.to_i)
           end
         end
       end
@@ -115,7 +180,7 @@ describe PostRevisor do
       let(:new_description) { "this is my new description." }
 
       it "should have no description by default" do
-        category.description.should be_blank
+        expect(category.description).to be_blank
       end
 
       context "one paragraph description" do
@@ -125,11 +190,11 @@ describe PostRevisor do
         end
 
         it "returns the changed category info" do
-          subject.category_changed.should == category
+          expect(subject.category_changed).to eq(category)
         end
 
         it "updates the description of the category" do
-          category.description.should == new_description
+          expect(category.description).to eq(new_description)
         end
       end
 
@@ -140,11 +205,11 @@ describe PostRevisor do
         end
 
         it "returns the changed category info" do
-          subject.category_changed.should == category
+          expect(subject.category_changed).to eq(category)
         end
 
         it "updates the description of the category" do
-          category.description.should == new_description
+          expect(category.description).to eq(new_description)
         end
       end
 
@@ -156,11 +221,11 @@ describe PostRevisor do
         end
 
         it "puts the description back to nothing" do
-          category.description.should be_blank
+          expect(category.description).to be_blank
         end
 
         it "returns the changed category info" do
-          subject.category_changed.should == category
+          expect(subject.category_changed).to eq(category)
         end
       end
 
@@ -186,11 +251,11 @@ describe PostRevisor do
       end
 
       it "allows an admin to insert images into a new user's post" do
-        post.errors.should be_blank
+        expect(post.errors).to be_blank
       end
 
       it "marks the admin as the last updater" do
-        post.last_editor_id.should == changed_by.id
+        expect(post.last_editor_id).to eq(changed_by.id)
       end
 
     end
@@ -204,7 +269,7 @@ describe PostRevisor do
       end
 
       it "doesn't allow images to be inserted" do
-        post.errors.should be_present
+        expect(post.errors).to be_present
       end
 
     end
@@ -212,50 +277,64 @@ describe PostRevisor do
 
     describe 'with a new body' do
       let(:changed_by) { Fabricate(:coding_horror) }
-      let!(:result) { subject.revise!(changed_by, { raw: "lets update the body" }) }
+      let!(:result) { subject.revise!(changed_by, { raw: "lets update the body. Здравствуйте" }) }
 
       it 'returns true' do
-        result.should == true
+        expect(result).to eq(true)
       end
 
       it 'updates the body' do
-        post.raw.should == "lets update the body"
+        expect(post.raw).to eq("lets update the body. Здравствуйте")
       end
 
       it 'sets the invalidate oneboxes attribute' do
-        post.invalidate_oneboxes.should == true
+        expect(post.invalidate_oneboxes).to eq(true)
       end
 
       it 'increased the versions' do
-        post.version.should == 2
-        post.public_version.should == 2
+        expect(post.version).to eq(2)
+        expect(post.public_version).to eq(2)
       end
 
       it 'has the new revision' do
-        post.revisions.size.should == 1
+        expect(post.revisions.size).to eq(1)
       end
 
       it "saved the user who made the change in the revisions" do
-        post.revisions.first.user_id.should == changed_by.id
+        expect(post.revisions.first.user_id).to eq(changed_by.id)
       end
 
       it "updates the word count" do
-        post.word_count.should == 4
+        expect(post.word_count).to eq(5)
         post.topic.reload
-        post.topic.word_count.should == 4
+        expect(post.topic.word_count).to eq(5)
       end
 
       context 'second poster posts again quickly' do
         before do
-          SiteSetting.stubs(:ninja_edit_window).returns(1.minute.to_i)
+          SiteSetting.stubs(:editing_grace_period).returns(1.minute.to_i)
           subject.revise!(changed_by, { raw: 'yet another updated body' }, revised_at: post.updated_at + 10.seconds)
           post.reload
         end
 
         it 'is a ninja edit, because the second poster posted again quickly' do
-          post.version.should == 2
-          post.public_version.should == 2
-          post.revisions.size.should == 1
+          expect(post.version).to eq(2)
+          expect(post.public_version).to eq(2)
+          expect(post.revisions.size).to eq(1)
+        end
+      end
+
+      context 'passing skip_revision as true' do
+        before do
+          SiteSetting.stubs(:editing_grace_period).returns(1.minute.to_i)
+          subject.revise!(changed_by, { raw: 'yet another updated body' }, { revised_at: post.updated_at + 10.hours, skip_revision: true })
+          post.reload
+        end
+
+        it 'does not create new revision ' do
+          expect(post.version).to eq(2)
+          expect(post.public_version).to eq(2)
+          expect(post.revisions.size).to eq(1)
         end
       end
     end
@@ -279,8 +358,157 @@ describe PostRevisor do
     it "doesn't strip starting whitespaces" do
       subject.revise!(post.user, { raw: "    <-- whitespaces -->    " })
       post.reload
-      post.raw.should == "    <-- whitespaces -->"
+      expect(post.raw).to eq("    <-- whitespaces -->")
     end
 
+    context "#publish_changes" do
+      let!(:post) { Fabricate(:post, topic_id: topic.id) }
+
+      it "should publish topic changes to clients" do
+        revisor = described_class.new(topic.ordered_posts.first, topic)
+
+        messages = MessageBus.track_publish do
+          revisor.revise!(newuser, { title: 'this is a test topic' })
+        end
+
+        message = messages.find { |m| m.channel == "/topic/#{topic.id}" }
+        payload = message.data
+        expect(payload[:reload_topic]).to eq(true)
+      end
+    end
+
+    context "tagging" do
+      context "tagging disabled" do
+        before do
+          SiteSetting.tagging_enabled = false
+        end
+
+        it "doesn't add the tags" do
+          result = subject.revise!(Fabricate(:user), { raw: "lets totally update the body", tags: ['totally', 'update'] })
+          expect(result).to eq(true)
+          post.reload
+          expect(post.topic.tags.size).to eq(0)
+        end
+      end
+
+      context "tagging enabled" do
+        before do
+          SiteSetting.tagging_enabled = true
+        end
+
+        context "can create tags" do
+          before do
+            SiteSetting.min_trust_to_create_tag = 0
+            SiteSetting.min_trust_level_to_tag_topics = 0
+          end
+
+          it "can create all tags if none exist" do
+            expect {
+              @result = subject.revise!(Fabricate(:user), { raw: "lets totally update the body", tags: ['totally', 'update'] })
+            }.to change { Tag.count }.by(2)
+            expect(@result).to eq(true)
+            post.reload
+            expect(post.topic.tags.map(&:name).sort).to eq(['totally', 'update'])
+          end
+
+          it "creates missing tags if some exist" do
+            Fabricate(:tag, name: 'totally')
+            expect {
+              @result = subject.revise!(Fabricate(:user), { raw: "lets totally update the body", tags: ['totally', 'update'] })
+            }.to change { Tag.count }.by(1)
+            expect(@result).to eq(true)
+            post.reload
+            expect(post.topic.tags.map(&:name).sort).to eq(['totally', 'update'])
+          end
+
+          it "can remove all tags" do
+            topic.tags = [Fabricate(:tag, name: "super"), Fabricate(:tag, name: "stuff")]
+            result = subject.revise!(Fabricate(:user), { raw: "lets totally update the body", tags: [] })
+            expect(result).to eq(true)
+            post.reload
+            expect(post.topic.tags.size).to eq(0)
+          end
+
+          it "can remove all tags using tags_empty_array" do
+            topic.tags = [Fabricate(:tag, name: "stuff")]
+            result = subject.revise!(Fabricate(:user), { raw: "lets totally update the body", tags_empty_array: "true" })
+            expect(result).to eq(true)
+            post.reload
+            expect(post.topic.tags.size).to eq(0)
+          end
+
+          it "can't add staff-only tags" do
+            SiteSetting.staff_tags = "important"
+            result = subject.revise!(Fabricate(:user), { raw: "lets totally update the body", tags: ['important', 'stuff'] })
+            expect(result).to eq(false)
+            expect(post.topic.errors.present?).to eq(true)
+          end
+
+          it "staff can add staff-only tags" do
+            SiteSetting.staff_tags = "important"
+            result = subject.revise!(Fabricate(:admin), { raw: "lets totally update the body", tags: ['important', 'stuff'] })
+            expect(result).to eq(true)
+            post.reload
+            expect(post.topic.tags.map(&:name).sort).to eq(['important', 'stuff'])
+          end
+
+          context "with staff-only tags" do
+            before do
+              SiteSetting.staff_tags = "important"
+              topic = post.topic
+              topic.tags = [Fabricate(:tag, name: "super"), Fabricate(:tag, name: "important"), Fabricate(:tag, name: "stuff")]
+            end
+
+            it "staff-only tags can't be removed" do
+              result = subject.revise!(Fabricate(:user), { raw: "lets totally update the body", tags: ['stuff'] })
+              expect(result).to eq(false)
+              expect(post.topic.errors.present?).to eq(true)
+              post.reload
+              expect(post.topic.tags.map(&:name).sort).to eq(['important', 'stuff', 'super'])
+            end
+
+            it "can't remove all tags if some are staff-only" do
+              result = subject.revise!(Fabricate(:user), { raw: "lets totally update the body", tags: [] })
+              expect(result).to eq(false)
+              expect(post.topic.errors.present?).to eq(true)
+              post.reload
+              expect(post.topic.tags.map(&:name).sort).to eq(['important', 'stuff', 'super'])
+            end
+
+            it "staff-only tags can be removed by staff" do
+              result = subject.revise!(Fabricate(:admin), { raw: "lets totally update the body", tags: ['stuff'] })
+              expect(result).to eq(true)
+              post.reload
+              expect(post.topic.tags.map(&:name)).to eq(['stuff'])
+            end
+
+            it "staff can remove all tags" do
+              result = subject.revise!(Fabricate(:admin), { raw: "lets totally update the body", tags: [] })
+              expect(result).to eq(true)
+              post.reload
+              expect(post.topic.tags.size).to eq(0)
+            end
+          end
+
+        end
+
+        context "cannot create tags" do
+          before do
+            SiteSetting.min_trust_to_create_tag = 4
+            SiteSetting.min_trust_level_to_tag_topics = 0
+          end
+
+          it "only uses existing tags" do
+            Fabricate(:tag, name: 'totally')
+            expect {
+              @result = subject.revise!(Fabricate(:user), { raw: "lets totally update the body", tags: ['totally', 'update'] })
+            }.to_not change { Tag.count }
+            expect(@result).to eq(true)
+            post.reload
+            expect(post.topic.tags.map(&:name)).to eq(['totally'])
+          end
+        end
+      end
+    end
   end
 end

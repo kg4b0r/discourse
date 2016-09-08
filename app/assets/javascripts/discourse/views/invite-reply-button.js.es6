@@ -1,16 +1,18 @@
 import ButtonView from 'discourse/views/button';
+import { iconHTML } from 'discourse/helpers/fa-icon';
 
 export default ButtonView.extend({
+  classNames: ['invite-topic'],
   textKey: 'topic.invite_reply.title',
   helpKey: 'topic.invite_reply.help',
   attributeBindings: ['disabled'],
-  disabled: Em.computed.or('controller.archived', 'controller.closed', 'controller.deleted'),
+  disabled: Em.computed.or('controller.model.archived', 'controller.model.closed', 'controller.model.deleted'),
 
-  renderIcon: function(buffer) {
-    buffer.push("<i class='fa fa-users'></i>");
+  renderIcon(buffer) {
+    buffer.push(iconHTML('users'));
   },
 
-  click: function() {
-    return this.get('controller').send('showInvite');
+  click() {
+    this.get('controller').send('showInvite');
   }
 });

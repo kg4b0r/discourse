@@ -1,60 +1,71 @@
-import ShowFooter from "discourse/mixins/show-footer";
 import RestrictedUserRoute from "discourse/routes/restricted-user";
+import showModal from 'discourse/lib/show-modal';
+import { popupAjaxError } from 'discourse/lib/ajax-error';
 
-export default RestrictedUserRoute.extend(ShowFooter, {
-  model: function() {
+export default RestrictedUserRoute.extend({
+  model() {
     return this.modelFor('user');
   },
 
-  setupController: function(controller, user) {
-    controller.setProperties({ model: user, newNameInput: user.get('name') });
+  setupController(controller, user) {
+    controller.reset();
+    controller.setProperties({
+      model: user,
+      newNameInput: user.get('name')
+    });
   },
 
   actions: {
-    showAvatarSelector: function() {
-      Discourse.Route.showModal(this, 'avatar-selector');
+    showAvatarSelector() {
+      showModal('avatar-selector');
 
       // all the properties needed for displaying the avatar selector modal
-      var controller = this.controllerFor('avatar-selector');
-      var user = this.modelFor('user');
-      var props = user.getProperties(
-        'username', 'email',
-        'uploaded_avatar_id',
-        'system_avatar_upload_id',
-        'gravatar_avatar_upload_id',
-        'custom_avatar_upload_id'
-      );
+      const props = this.modelFor('user').getProperties(
+              'id',
+              'email',
+              'username',
+              'avatar_template',
+              'system_avatar_template',
+              'gravatar_avatar_template',
+              'custom_avatar_template',
+              'system_avatar_upload_id',
+              'gravatar_avatar_upload_id',
+              'custom_avatar_upload_id'
+            );
 
-      switch (props.uploaded_avatar_id) {
-        case props.system_avatar_upload_id:
+      switch (props.avatar_template) {
+        case props.system_avatar_template:
           props.selected = "system";
           break;
-        case props.gravatar_avatar_upload_id:
+        case props.gravatar_avatar_template:
           props.selected = "gravatar";
           break;
         default:
           props.selected = "uploaded";
       }
 
-      controller.setProperties(props);
+      this.controllerFor('avatar-selector').setProperties(props);
     },
 
-    saveAvatarSelection: function() {
-      var user = this.modelFor('user');
-      var avatarSelector = this.controllerFor('avatar-selector');
+    saveAvatarSelection() {
+      const user = this.modelFor('user'),
+            controller = this.controllerFor('avatar-selector'),
+            selectedUploadId = controller.get("selectedUploadId"),
+            selectedAvatarTemplate = controller.get("selectedAvatarTemplate"),
+            type = controller.get("selected");
 
-      // sends the information to the server if it has changed
-      if (avatarSelector.get('selectedUploadId') !== user.get('uploaded_avatar_id')) {
-        user.pickAvatar(avatarSelector.get('selectedUploadId'));
-      }
+      user.pickAvatar(selectedUploadId, type, selectedAvatarTemplate)
+          .then(() => {
+            user.setProperties(controller.getProperties(
+              'system_avatar_template',
+              'gravatar_avatar_template',
+              'custom_avatar_template'
+            ));
+            bootbox.alert(I18n.t("user.change_avatar.cache_notice"));
+          }).catch(popupAjaxError);
 
       // saves the data back
-      user.setProperties(avatarSelector.getProperties(
-        'system_avatar_upload_id',
-        'gravatar_avatar_upload_id',
-        'custom_avatar_upload_id'
-      ));
-      avatarSelector.send('closeModal');
+      controller.send('closeModal');
     },
 
   }

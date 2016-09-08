@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'rails_helper'
 
 describe GroupMessage do
 
@@ -44,7 +44,7 @@ describe GroupMessage do
     before  { GroupMessage.any_instance.stubs(:sent_recently?).returns(true) }
     subject { GroupMessage.create(moderators_group, :user_automatically_blocked, {user: user}) }
 
-    it { should eq(false) }
+    it { is_expected.to eq(false) }
 
     it 'should not send the same notification again' do
       PostCreator.expects(:create).never

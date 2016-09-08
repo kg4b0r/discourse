@@ -1,4 +1,5 @@
 Discourse::Application.configure do
+
   # Settings specified here will take precedence over those in config/application.rb
 
   # In the development environment your application's code is reloaded on
@@ -22,7 +23,7 @@ Discourse::Application.configure do
   # Don't Digest assets, makes debugging uglier
   config.assets.digest = false
 
-  config.assets.debug = true
+  config.assets.debug = false
 
   # Raise an error on page load if there are pending migrations
   config.active_record.migration_error = :page_load
@@ -41,14 +42,21 @@ Discourse::Application.configure do
   config.load_mini_profiler = true
 
   require 'middleware/turbo_dev'
-  require 'middleware/missing_avatars'
   config.middleware.insert 0, Middleware::TurboDev
+  require 'middleware/missing_avatars'
   config.middleware.insert 1, Middleware::MissingAvatars
 
   config.enable_anon_caching = false
   require 'rbtrace'
 
   if emails = GlobalSetting.developer_emails
-    config.developer_emails = emails.split(",").map(&:strip)
+    config.developer_emails = emails.split(",").map(&:downcase).map(&:strip)
+  end
+
+  config.after_initialize do
+    if ENV['BULLET']
+      Bullet.enable = true
+      Bullet.rails_logger = true
+    end
   end
 end

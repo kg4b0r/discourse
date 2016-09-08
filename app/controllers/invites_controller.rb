@@ -1,10 +1,14 @@
+require_dependency 'rate_limiter'
+
 class InvitesController < ApplicationController
 
-  skip_before_filter :check_xhr
+  # TODO tighten this, why skip check on everything?
+  skip_before_filter :check_xhr, :preload_json
   skip_before_filter :redirect_to_login_if_required
 
-  before_filter :ensure_logged_in, only: [:destroy, :create, :resend_invite, :check_csv_chunk, :upload_csv_chunk]
+  before_filter :ensure_logged_in, only: [:destroy, :create, :create_invite_link, :resend_invite, :resend_all_invites, :check_csv_chunk, :upload_csv_chunk]
   before_filter :ensure_new_registrations_allowed, only: [:show, :redeem_disposable_invite]
+  before_filter :ensure_not_logged_in, only: [:show, :redeem_disposable_invite]
 
   def show
     invite = Invite.find_by(invite_key: params[:id])
@@ -19,13 +23,13 @@ class InvitesController < ApplicationController
 
         topic = invite.topics.first
         if topic.present?
-          redirect_to "#{Discourse.base_uri}#{topic.relative_url}"
+          redirect_to path("#{topic.relative_url}")
           return
         end
       end
     end
 
-    redirect_to "/"
+    redirect_to path("/")
   end
 
   def create
@@ -40,10 +44,37 @@ class InvitesController < ApplicationController
       guardian.ensure_can_send_multiple_invites!(current_user)
     end
 
-    if Invite.invite_by_email(params[:email], current_user, topic=nil,  group_ids)
-      render json: success_json
-    else
-      render json: failed_json, status: 422
+    begin
+      if Invite.invite_by_email(params[:email], current_user, _topic=nil,  group_ids, params[:custom_message])
+        render json: success_json
+      else
+        render json: failed_json, status: 422
+      end
+    rescue => e
+      render json: {errors: [e.message]}, status: 422
+    end
+  end
+
+  def create_invite_link
+    params.require(:email)
+    group_ids = Group.lookup_group_ids(params)
+    topic = Topic.find_by(id: params[:topic_id])
+    guardian.ensure_can_invite_to_forum!(group_ids)
+
+    invite_exists = Invite.where(email: params[:email], invited_by_id: current_user.id).first
+    if invite_exists
+      guardian.ensure_can_send_multiple_invites!(current_user)
+    end
+
+    begin
+      # generate invite link
+      if invite_link = Invite.generate_invite_link(params[:email], current_user, topic, group_ids)
+        render_json_dump(invite_link)
+      else
+        render json: failed_json, status: 422
+      end
+    rescue => e
+      render json: {errors: [e.message]}, status: 422
     end
   end
 
@@ -77,13 +108,13 @@ class InvitesController < ApplicationController
 
         topic = invite.topics.first
         if topic.present?
-          redirect_to "#{Discourse.base_uri}#{topic.relative_url}"
+          redirect_to path("#{topic.relative_url}")
           return
         end
       end
     end
 
-    redirect_to "/"
+    redirect_to path("/")
   end
 
   def destroy
@@ -98,11 +129,21 @@ class InvitesController < ApplicationController
 
   def resend_invite
     params.require(:email)
+    RateLimiter.new(current_user, "resend-invite-per-hour", 10, 1.hour).performed!
 
     invite = Invite.find_by(invited_by_id: current_user.id, email: params[:email])
     raise Discourse::InvalidParameters.new(:email) if invite.blank?
     invite.resend_invite
+    render nothing: true
 
+  rescue RateLimiter::LimitExceeded
+    render_json_error(I18n.t("rate_limiter.slow_down"))
+  end
+
+  def resend_all_invites
+    guardian.ensure_can_resend_all_invites!(current_user)
+
+    Invite.resend_all_invites_from(current_user.id)
     render nothing: true
   end
 
@@ -163,7 +204,15 @@ class InvitesController < ApplicationController
   def ensure_new_registrations_allowed
     unless SiteSetting.allow_new_registrations
       flash[:error] = I18n.t('login.new_registrations_disabled')
-      render layout: 'no_js'
+      render layout: 'no_ember'
+      false
+    end
+  end
+
+  def ensure_not_logged_in
+    if current_user
+      flash[:error] = I18n.t("login.already_logged_in", current_user: current_user.username)
+      render layout: 'no_ember'
       false
     end
   end

@@ -1,10 +1,12 @@
-require 'spec_helper'
+require 'rails_helper'
 require 'tempfile'
 
 describe GlobalSetting::EnvProvider do
   it "can detect keys from env" do
     ENV['DISCOURSE_BLA'] = '1'
-    GlobalSetting::EnvProvider.new.keys.should include(:bla)
+    ENV['DISCOURSE_BLA_2'] = '2'
+    expect(GlobalSetting::EnvProvider.new.keys).to include(:bla)
+    expect(GlobalSetting::EnvProvider.new.keys).to include(:bla_2)
   end
 end
 describe GlobalSetting::FileProvider do
@@ -12,21 +14,25 @@ describe GlobalSetting::FileProvider do
     f = Tempfile.new('foo')
     f.write("  # this is a comment\n")
     f.write("\n")
-    f.write("a = 1000  # this is a comment\n")
+    f.write(" a = 1000  # this is a comment\n")
     f.write("b = \"10 # = 00\"  # this is a # comment\n")
     f.write("c = \'10 # = 00\' # this is a # comment\n")
     f.write("d =\n")
+    f.write("#f = 1\n")
+    f.write("a1 = 1\n")
     f.close
 
     provider = GlobalSetting::FileProvider.from(f.path)
 
-    provider.lookup(:a,"").should == 1000
-    provider.lookup(:b,"").should == "10 # = 00"
-    provider.lookup(:c,"").should == "10 # = 00"
-    provider.lookup(:d,"bob").should == nil
-    provider.lookup(:e,"bob").should == "bob"
+    expect(provider.lookup(:a,"")).to eq 1000
+    expect(provider.lookup(:b,"")).to eq "10 # = 00"
+    expect(provider.lookup(:c,"")).to eq "10 # = 00"
+    expect(provider.lookup(:d,"bob")).to eq nil
+    expect(provider.lookup(:e,"bob")).to eq "bob"
+    expect(provider.lookup(:f,"bob")).to eq "bob"
+    expect(provider.lookup(:a1,"")).to eq 1
 
-    provider.keys.sort.should == [:a, :b, :c, :d]
+    expect(provider.keys.sort).to eq [:a, :a1, :b, :c, :d]
 
     f.unlink
   end
@@ -38,7 +44,7 @@ describe GlobalSetting::FileProvider do
 
     provider = GlobalSetting::FileProvider.from(f.path)
 
-    provider.lookup(:a,"").should == 500
+    expect(provider.lookup(:a,"")).to eq 500
 
     f.unlink
   end

@@ -1,125 +1,147 @@
-import DiscourseController from 'discourse/controllers/controller';
+import Quote from 'discourse/lib/quote';
+import computed from 'ember-addons/ember-computed-decorators';
+import { selectedText } from 'discourse/lib/utilities';
 
-/*global assetPath:true */
-
-export default DiscourseController.extend({
+export default Ember.Controller.extend({
   needs: ['topic', 'composer'],
 
-  init: function() {
-    this._super();
-    $LAB.script(assetPath('defer/html-sanitizer-bundle'));
+  @computed('buffer', 'postId')
+  post(buffer, postId) {
+    if (!postId || Ember.isEmpty(buffer)) { return null; }
+
+    const postStream = this.get('controllers.topic.model.postStream');
+    const post = postStream.findLoadedPost(postId);
+
+    return post;
   },
 
-  /**
-    If the buffer is cleared, clear out other state (post)
-  **/
-  bufferChanged: function() {
-    if (this.blank('buffer')) this.set('post', null);
-  }.observes('buffer'),
-
-  /**
-    Save the currently selected text and displays the
-    "quote reply" button
-
-    @method selectText
-  **/
-  selectText: function(postId) {
+  // Save the currently selected text and displays the
+  //  "quote reply" button
+  selectText(postId) {
     // anonymous users cannot "quote-reply"
-    if (!Discourse.User.current()) return;
+    if (!this.currentUser) return;
 
-    // don't display the "quote-reply" button if we can't create a post
-    if (!this.get('controllers.topic.model.details.can_create_post')) return;
+    // don't display the "quote-reply" button if we can't reply
+    const topicDetails = this.get('controllers.topic.model.details');
+    if (!(topicDetails.get('can_reply_as_new_topic') || topicDetails.get('can_create_post'))) {
+      return;
+    }
 
-    var selection = window.getSelection();
-    // no selections
-    if (selection.rangeCount === 0) return;
+    const selection = window.getSelection();
+
+     // no selections
+    if (selection.isCollapsed) {
+      this.set('buffer', '');
+      return;
+    }
 
     // retrieve the selected range
-    var range = selection.getRangeAt(0),
-        cloned = range.cloneRange(),
-        $ancestor = $(range.commonAncestorContainer);
+    const range = selection.getRangeAt(0),
+          cloned = range.cloneRange(),
+          $ancestor = $(range.commonAncestorContainer);
 
     if ($ancestor.closest('.cooked').length === 0) {
       this.set('buffer', '');
       return;
     }
 
-    var selectedText = Discourse.Utilities.selectedText();
-    if (this.get('buffer') === selectedText) return;
+    const selVal = selectedText();
+    if (this.get('buffer') === selVal) return;
 
     // we need to retrieve the post data from the posts collection in the topic controller
-    var postStream = this.get('controllers.topic.postStream');
-    this.set('post', postStream.findLoadedPost(postId));
-    this.set('buffer', selectedText);
+    this.set('postId', postId);
+    this.set('buffer', selVal);
 
     // create a marker element
-    var markerElement = document.createElement("span");
+    const markerElement = document.createElement("span");
     // containing a single invisible character
     markerElement.appendChild(document.createTextNode("\ufeff"));
 
+    const isMobileDevice = this.site.isMobileDevice;
+    const capabilities = this.capabilities,
+          isIOS = capabilities.isIOS,
+          isAndroid = capabilities.isAndroid;
+
     // collapse the range at the beginning/end of the selection
-    range.collapse(!Discourse.Mobile.isMobileDevice);
+    range.collapse(!isMobileDevice);
     // and insert it at the start of our selection range
     range.insertNode(markerElement);
 
-    // retrieve the position of the market
-    var markerOffset = $(markerElement).offset(),
-        $quoteButton = $('.quote-button');
+    // retrieve the position of the marker
+    const $markerElement = $(markerElement),
+          markerOffset = $markerElement.offset(),
+          parentScrollLeft = $markerElement.parent().scrollLeft(),
+          $quoteButton = $('.quote-button');
 
     // remove the marker
     markerElement.parentNode.removeChild(markerElement);
 
     // work around Chrome that would sometimes lose the selection
-    var sel = window.getSelection();
+    const sel = window.getSelection();
     sel.removeAllRanges();
     sel.addRange(cloned);
 
     // move the quote button above the marker
     Em.run.schedule('afterRender', function() {
-      var top = markerOffset.top;
-      var left = markerOffset.left;
+      let topOff = markerOffset.top;
+      let leftOff = markerOffset.left;
 
-      if (Discourse.Mobile.isMobileDevice) {
-        top = top + 20;
-        left = Math.min(left + 10, $(window).width() - $quoteButton.outerWidth());
+      if (parentScrollLeft > 0) leftOff += parentScrollLeft;
+
+      if (isMobileDevice || isIOS || isAndroid) {
+        topOff = topOff + 20;
+        leftOff = Math.min(leftOff + 10, $(window).width() - $quoteButton.outerWidth());
       } else {
-        top = top - $quoteButton.outerHeight() - 5;
+        topOff = topOff - $quoteButton.outerHeight() - 5;
       }
 
-      $quoteButton.offset({ top: top, left: left });
+      $quoteButton.offset({ top: topOff, left: leftOff });
     });
   },
 
-  /**
-    Quote the currently selected text
+  quoteText() {
+    const Composer = require('discourse/models/composer').default;
+    const postId = this.get('postId');
+    const post = this.get('post');
 
-    @method quoteText
-  **/
-  quoteText: function() {
-    var post = this.get('post');
-    var composerController = this.get('controllers.composer');
-    var composerOpts = {
-      action: Discourse.Composer.REPLY,
-      draftKey: this.get('post.topic.draft_key')
+    // defer load if needed, if in an expanded replies section
+    if (!post) {
+      const postStream = this.get('controllers.topic.model.postStream');
+      return postStream.loadPost(postId).then(p => {
+        this.set('post', p);
+        return this.quoteText();
+      });
+    }
+
+    // If we can't create a post, delegate to reply as new topic
+    if (!this.get('controllers.topic.model.details.can_create_post')) {
+      this.get('controllers.topic').send('replyAsNewTopic', post);
+      return;
+    }
+
+    const composerController = this.get('controllers.composer');
+    const composerOpts = {
+      action: Composer.REPLY,
+      draftKey: post.get('topic.draft_key')
     };
 
-    if(post.get('post_number') === 1) {
+    if (post.get('post_number') === 1) {
       composerOpts.topic = post.get("topic");
     } else {
       composerOpts.post = post;
     }
 
     // If the composer is associated with a different post, we don't change it.
-    var composerPost = composerController.get('content.post');
+    const composerPost = composerController.get('content.post');
     if (composerPost && (composerPost.get('id') !== this.get('post.id'))) {
       composerOpts.post = composerPost;
     }
 
-    var buffer = this.get('buffer');
-    var quotedText = Discourse.Quote.build(post, buffer);
+    const buffer = this.get('buffer');
+    const quotedText = Quote.build(post, buffer);
     composerOpts.quote = quotedText;
     if (composerController.get('content.viewOpen') || composerController.get('content.viewDraft')) {
-      composerController.appendBlockAtCursor(quotedText.trim());
+      this.appEvents.trigger('composer:insert-text', quotedText);
     } else {
       composerController.open(composerOpts);
     }
@@ -127,12 +149,7 @@ export default DiscourseController.extend({
     return false;
   },
 
-  /**
-    Deselect the currently selected text
-
-    @method deselectText
-  **/
-  deselectText: function() {
+  deselectText() {
     // clear selected text
     window.getSelection().removeAllRanges();
     // clean up the buffer

@@ -1,13 +1,26 @@
-require 'spec_helper'
+require 'rails_helper'
 require 'email/sender'
 
 describe Email::Sender do
 
   it "doesn't deliver mail when mails are disabled" do
-    SiteSetting.expects(:disable_emails).returns(true)
+    SiteSetting.disable_emails = true
     Mail::Message.any_instance.expects(:deliver_now).never
     message = Mail::Message.new(to: "hello@world.com" , body: "hello")
-    Email::Sender.new(message, :hello).send
+    expect(Email::Sender.new(message, :hello).send).to eq(nil)
+  end
+
+  it "delivers mail when mails are disabled but the email_type is admin_login" do
+    SiteSetting.disable_emails = true
+    Mail::Message.any_instance.expects(:deliver_now).once
+    message = Mail::Message.new(to: "hello@world.com" , body: "hello")
+    Email::Sender.new(message, :admin_login).send
+  end
+
+  it "doesn't deliver mail when the message is of type NullMail" do
+    Mail::Message.any_instance.expects(:deliver_now).never
+    message = ActionMailer::Base::NullMail.new
+    expect(Email::Sender.new(message, :hello).send).to eq(nil)
   end
 
   it "doesn't deliver mail when the message is nil" do
@@ -29,19 +42,19 @@ describe Email::Sender do
 
   context "host_for" do
     it "defaults to localhost" do
-      Email::Sender.host_for(nil).should == "localhost"
+      expect(Email::Sender.host_for(nil)).to eq("localhost")
     end
 
     it "returns localhost for a weird host" do
-      Email::Sender.host_for("this is not a real host").should == "localhost"
+      expect(Email::Sender.host_for("this is not a real host")).to eq("localhost")
     end
 
     it "parses hosts from urls" do
-      Email::Sender.host_for("http://meta.discourse.org").should == "meta.discourse.org"
+      expect(Email::Sender.host_for("http://meta.discourse.org")).to eq("meta.discourse.org")
     end
 
     it "downcases hosts" do
-      Email::Sender.host_for("http://ForumSite.com").should == "forumsite.com"
+      expect(Email::Sender.host_for("http://ForumSite.com")).to eq("forumsite.com")
     end
 
   end
@@ -64,13 +77,39 @@ describe Email::Sender do
       email_sender.send
     end
 
+    context "doesn't add return_path when no plus addressing" do
+      before { SiteSetting.reply_by_email_address = '%{reply_key}@test.com' }
+
+      When { email_sender.send }
+      Then {
+        expect(message.header[:return_path].to_s).to eq("")
+      }
+    end
+
+    context "adds return_path with plus addressing" do
+      before { SiteSetting.reply_by_email_address = 'replies+%{reply_key}@test.com' }
+
+      When { email_sender.send }
+      Then {
+        expect(message.header[:return_path].to_s).to eq("replies+verp-#{EmailLog.last.bounce_key}@test.com")
+      }
+    end
+
     context "adds a List-ID header to identify the forum" do
       before do
-        message.header['X-Discourse-Topic-Id'] = 5577
+        category =  Fabricate(:category, name: 'Name With Space')
+        topic = Fabricate(:topic, category_id: category.id)
+        message.header['X-Discourse-Topic-Id'] = topic.id
       end
 
       When { email_sender.send }
       Then { expect(message.header['List-ID']).to be_present }
+      Then { expect(message.header['List-ID'].to_s).to match('name-with-space') }
+    end
+
+    context "adds a Message-ID header even when topic id is not present" do
+      When { email_sender.send }
+      Then { expect(message.header['Message-ID']).to be_present }
     end
 
     context "adds Precedence header" do
@@ -80,6 +119,24 @@ describe Email::Sender do
 
       When { email_sender.send }
       Then { expect(message.header['Precedence']).to be_present }
+    end
+
+    context "removes custom Discourse headers from topic notification mails" do
+      before do
+        message.header['X-Discourse-Topic-Id'] = 5577
+      end
+
+      When { email_sender.send }
+      Then { expect(message.header['X-Discourse-Topic-Id']).not_to be_present }
+      Then { expect(message.header['X-Discourse-Post-Id']).not_to be_present }
+      Then { expect(message.header['X-Discourse-Reply-Key']).not_to be_present }
+    end
+
+    context "removes custom Discourse headers from digest/registration/other mails" do
+      When { email_sender.send }
+      Then { expect(message.header['X-Discourse-Topic-Id']).not_to be_present }
+      Then { expect(message.header['X-Discourse-Post-Id']).not_to be_present }
+      Then { expect(message.header['X-Discourse-Reply-Key']).not_to be_present }
     end
 
     context 'email logs' do
@@ -144,7 +201,7 @@ describe Email::Sender do
     end
 
     it 'should have the current user_id' do
-      @email_log.user_id.should == user.id
+      expect(@email_log.user_id).to eq(user.id)
     end
 
 

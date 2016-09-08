@@ -1,37 +1,53 @@
 .show-more {
-  position: absolute;
-  top: 4px;
   width: 100%;
+  z-index: 1;
+  &.has-topics {
+    position: absolute;
+    top: 7px;
+  }
 }
 
 .list-controls {
   #navigation-bar {
     .has-icon span:before {
       margin-right: 4px;
-      font: 15px/0.9 "FontAwesome";
-    }
-    .has-icon .starred:before {
-      content: "\f005";
+      font: 1.071em/0.9 "FontAwesome";
     }
   }
 }
 
+html.anon .topic-list a.title:visited:not(.badge-notification) {color: dark-light-diff($primary, $secondary, 45%, -30%);}
+.topic-list a.title.visited:not(.badge-notification) {color: dark-light-diff($primary, $secondary, 45%, -30%);}
+
 .topic-list {
   width: 100%;
-  border-collapse: separate;
-  border-spacing: 0;
-  border-top: 1px solid dark-light-diff($primary, $secondary, 90%, -75%);
-  background: rgba($secondary, .8);
+  border-collapse: collapse;
+
+
 
   > tbody > tr {
-
-    &.archived a {
-      opacity: 0.6;
-    }
     &.has-excerpt .star {
       vertical-align: top;
       margin-top: 2px;
     }
+    border-bottom: 1px solid dark-light-diff($primary, $secondary, 90%, -75%);
+
+    &.last-visit {
+      border-bottom: 1px solid scale-color($danger, $lightness: 60%);
+      + tr::after {
+        content: attr(data-last-visit-text);
+        color: scale-color($danger, $lightness: 50%);
+        position: absolute;
+        left: 50%;
+        margin-top: -10px;
+        padding: 0 10px;
+        background: $secondary;
+      }
+    }
+  }
+
+  > tbody > tr:first-of-type {
+    border-top: 3px solid dark-light-diff($primary, $secondary, 90%, -75%);
   }
 
   th,
@@ -42,28 +58,28 @@
 
   }
   th {
-    color: scale-color($primary, $lightness: 50%);
+    color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
     font-weight: normal;
-    font-size: 14px;
-    button i.fa {color: scale-color($primary, $lightness: 50%);}
+    font-size: 1em;
+    button i.fa {color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));}
 
   }
   td {
-    color: scale-color($primary, $lightness: 50%);
-    font-size: 14px;
+    color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
+    font-size: 1em;
   }
 
   .main-link {
-    font-size: 16px;
+    font-size: 1.143em;
     a.title {
       padding: 15px 0;
     }
   }
 
   .topic-excerpt {
-    font-size: 13px;
+    font-size: 0.929em;
     margin-top: 8px;
-    color: scale-color($primary, $lightness: 50%);
+    color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
     word-wrap: break-word;
     line-height: 1.4;
     padding-right: 20px;
@@ -74,7 +90,7 @@
   .topic-status {
     margin-right: 4px;
     padding: 0;
-    font-size: 15px;
+    font-size: 1.071em;
     &:last-of-type {
       margin-right: 0;
     }
@@ -102,22 +118,13 @@
     }
   }
 
-  td.category a {
-    // suppress extra long category names in tables
-    max-width:150px;
-    overflow:hidden;
-    text-overflow:ellipsis;
-  }
-
 }
-
 
 .topic-list.categories {
 
   .category .badge-notification {
     background-color:transparent;
     color: scale-color($primary, $lightness: 50%);
-    position: inherit;
   }
 
   .subcategories .badge {
@@ -141,7 +148,7 @@
         padding: 2px;
         vertical-align: bottom;
         line-height: 24px;
-        &.value { text-align: right; font-size: 20px; }
+        &.value { text-align: right; font-size: 1.429em; }
         &.unit  { text-align: left; }
       }
     }
@@ -157,31 +164,16 @@
 }
 
 .list-controls {
-  .home {
-    background-color: scale-color-diff();
+  .category-dropdown-menu .home {
     color: $primary;
+    margin-left: 8px;
   }
-  .badge-category {
-    padding: 4px 10px;
-    display: inline-block;
-    line-height: 24px;
-    float: left;
-  }
-  .category-dropdown-button {
-    border-left: 1px solid rgba(0,0,0,0.15);
-    font-size: 16px;
-    width: 10px;
-    text-align: center;
 
-    &:hover {
-      opacity: 0.8;
-    }
-  }
-clear: both;
+  clear: both;
 }
 
 #list-area {
-  margin-bottom: 300px;
+  margin-bottom: 100px;
   .empty-topic-list {
     padding: 10px;
   }
@@ -190,7 +182,7 @@ clear: both;
     padding: 0;
     border: 0;
     color: scale-color($danger, $lightness: 20%);
-    font-size: 13px;
+    font-size: 0.929em;
     cursor: default;
   }
 }
@@ -198,7 +190,7 @@ clear: both;
 .topic-list {
   .alert {
     margin-bottom: 0;
-    font-size: 14px;
+    font-size: 1em;
   }
   .spinner {
     margin-top: 40px;
@@ -216,35 +208,41 @@ ol.category-breadcrumb {
     float: left;
     margin-right: 5px;
   }
+
+  .bread-crumbs-right-outlet {
+    float: left;
+  }
 }
 
 .list-controls .category-dropdown-menu {
   overflow-x: hidden;
   overflow-y: auto;
   position: absolute;
-  border: 1px solid scale-color-diff();
+  border: 1px solid dark-light-diff($primary, $secondary, 90%, -60%);
   background-color: $secondary;
   z-index: 100;
 
+  a.badge-category, a.badge-category-parent {
+    line-height: 19px;
+    overflow:hidden;
+    margin-bottom: 0;
+  }
   a.badge-category {
-    font-size: 13px;
+    font-size: 0.929em;
     font-weight: bold;
     float: none;
-    line-height: 19px;
     text-transform: none;
-    width: 100%;
-    min-width: 102px;
-    margin-right: 20px;
-    margin-bottom: 0;
     max-width:200px;
-    overflow:hidden;
     text-overflow:ellipsis;
   }
 }
 
 .fa-thumb-tack.unpinned {
-  @include fa-icon-rotate(315deg, 1);
+  @include fa-icon-rotate(180deg, 1);
   color: $primary;
+  /* because it is rotated, right becomes left! */
+  padding-left: 3px;
+  padding-right: 0 !important;
 }
 
 .topic-statuses .fa {
@@ -252,18 +250,28 @@ ol.category-breadcrumb {
 }
 
 .period-chooser {
-
+  display: inline-block;
   @include unselectable;
 
   h2 {
     float: left;
+    margin: 5px 0 10px;
+    .top-date-string {
+      font-size: 0.7em;
+    }
+  }
+
+  .top-date-string {
+    color: dark-light-choose(scale-color($primary, $lightness: 60%), scale-color($secondary, $lightness: 40%));
+    font-weight: normal;
+    text-transform: uppercase;
   }
 
   button {
     outline: 0;
     background: transparent;
     border: 0;
-    font-size: 20px;
+    font-size: 1.429em;
     padding: 5px 10px 0 10px;
   }
 
@@ -271,11 +279,12 @@ ol.category-breadcrumb {
 
     @include unselectable;
 
-    border: 1px solid scale-color-diff();
+    font-size: 1.2em;
+    border: 1px solid dark-light-diff($primary, $secondary, 90%, -60%);
     padding: 5px;
     background: $secondary;
     position: absolute;
-    z-index: 1110;
+    z-index: 999;
     box-shadow: 0 2px 2px rgba(0,0,0, .4);
 
     ul {
@@ -286,9 +295,15 @@ ol.category-breadcrumb {
       li {
         margin: 0;
         padding: 0;
-        a {
+        font-weight: bold;
+        a, a:visited {
           display: block;
           padding: 5px;
+          color: $primary;
+        }
+        .top-date-string {
+          font-weight: normal;
+          font-size: 0.8em;
         }
         &:hover {
           background-color: dark-light-diff($highlight, $secondary, 50%, -70%);
@@ -300,8 +315,12 @@ ol.category-breadcrumb {
 
 .top-title-buttons {
   display: inline;
+
+  button {
+    margin-right: 0.5em;
+  }
 }
 
 div.education {
-  color: scale-color($primary, $lightness: 50%);
+  color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
 }

@@ -8,6 +8,7 @@
     margin-top: 10px;
   }
 }
+
 .post-menu-area {
   margin-bottom: 10px;
   margin-top: 20px;
@@ -20,7 +21,7 @@
   padding-top: 14px;
   margin-bottom: 10px;
   .star {
-    font-size: 20px;
+    font-size: 1.429em;
     margin-top: 6px;
     margin-right: 6px;
   }
@@ -41,8 +42,6 @@
     line-height: 1.2em;
     overflow: hidden;
     a {color: $primary;}
-
-
   }
 
 
@@ -55,43 +54,21 @@
     margin-bottom: 2px;
   }
   .private-message-glyph { display: none; }
-
-
 }
 
 .private-message-glyph {
-  color: scale-color($primary, $lightness: 75%);
+  color: dark-light-choose(scale-color($primary, $lightness: 75%), scale-color($secondary, $lightness: 25%));
   float: left;
   margin: 0 5px 0 0;
 }
 .private_message #topic-title .private-message-glyph { display: inline; }
-
-a.reply-new {
-  margin-top: 3px;
-  color: scale-color($primary, $lightness: 50%);
-  i {
-    margin-right: 3px;
-    background: $secondary;
-    padding: 1.5px 3px;
-    border-radius: 20px;
-    @include transition(all linear .15s);
-    margin-left: -20px;
-  }
-}
-
-a:hover.reply-new {
-  color: $tertiary;
-  i {
-    background: dark-light-diff($tertiary, $secondary, 90%, -65%);
-  }
-}
 
 .topic-error {
   padding: 18px;
   width: 60%;
   margin-left: auto;
   margin-right: auto;
-  font-size: 24px;
+  font-size: 1.714em;
   text-align: center;
   line-height: 1.1em;
 
@@ -107,6 +84,7 @@ a:hover.reply-new {
   border-top: 1px solid dark-light-diff($primary, $secondary, 90%, -75%);
   padding-top: 10px;
   height: 20px;
+  width: 757px;
 }
 
 #topic-progress-wrapper {
@@ -115,7 +93,6 @@ a:hover.reply-new {
   width: 0;
   bottom: 0;
   z-index: 500;
-  outline: 1px solid transparent;
   &.docked {
     position: absolute;
     bottom: -70px;
@@ -123,14 +100,13 @@ a:hover.reply-new {
 }
 
 #topic-progress-expanded {
-  border: 1px solid scale-color-diff();
+  border: 1px solid dark-light-diff($primary, $secondary, 90%, -60%);
   padding: 5px;
   background: $secondary;
-  @include box-shadow(0 0px 2px rgba(0,0,0, .2));
 
   position: relative;
-  left: 345px;
-  width: 133px;
+  left: 340px;
+  width: 135px;
   padding: 5px;
 
   button.full {
@@ -140,7 +116,7 @@ a:hover.reply-new {
       display: block;
       margin-top: 2px;
       margin-bottom: 2px;
-      font-size: 18px;
+      font-size: 1.286em;
     }
   }
   .jump-form {
@@ -150,13 +126,17 @@ a:hover.reply-new {
       height: 20px;
       text-align: center;
       margin-bottom: 0;
-      font-size: 16px;
+      font-size: 1.143em;
     }
     button.btn {
       float: right;
       width: 55px;
     }
   }
+  button.btn.jump-prompt {
+    margin: 0;
+  }
+
   button.btn.jump-bottom {
     margin: 5px 0 0 0;
   }
@@ -164,13 +144,14 @@ a:hover.reply-new {
 
 #topic-progress {
   position: relative;
-  left: 345px;
+  left: 340px;
   &.hidden {
     display: none;
   }
-  border: none;
-  background-color: scale-color-diff();
-  color: scale-color($primary, $lightness: 50%);
+  background-color: $secondary;
+  color: $tertiary;
+  border: 1px solid dark-light-diff($tertiary, $secondary, 85%, -65%);
+  border-bottom: none;
   width: 145px;
   height: 34px;
 
@@ -195,7 +176,7 @@ a:hover.reply-new {
   }
   h4 {
     display: inline;
-    font-size: 18px;
+    font-size: 1.286em;
     line-height: 15px;
   }
   .bg {
@@ -203,22 +184,10 @@ a:hover.reply-new {
     top: 0;
     bottom: 0;
     width: 0;
-    border-right: 1px solid  scale-color-diff();
-    background-color:  dark-light-diff($success, $secondary, 60%, -35%);
-    @include transition(width .75s);
-
+    border-right: 1px solid  dark-light-diff($tertiary, $secondary, 85%, -65%);
+    background-color:  dark-light-diff($tertiary, $secondary, 85%, -65%);
+    transition: width .75s;
   }
-}
-
-#suggested-topics .topic-statuses .topic-status {
-  padding: 0;
-  i {
-    font-size:15px;
-  }
-}
-
-#suggested-topics .topics {
-  padding-bottom: 15px;
 }
 
 .heatmap-high {color: #fe7a15 !important;}
@@ -236,24 +205,42 @@ a:hover.reply-new {
   bottom: 0;
   position: fixed;
   width: 100%;
-  font-size: 15px;
+  font-size: 1.071em;
   z-index: 495
 }
 
 @media all
-and (max-width : 940px) {
+and (max-width : 1000px) {
 
   #topic-progress, #topic-progress-expanded {
-    left: 295px;
+      right: 0;
+      left: 0;
     }
+
+  #topic-progress-wrapper {
+    right: 160px;
+  }
+
+  #topic-progress-wrapper.docked {
+    right: 152px;
+  }
+
+  #topic-footer-main-buttons {
+    max-width: 70%;
+  }
 }
 
 
 @media all
-and (max-width : 870px) {
+and (max-width : 485px) {
 
-  #topic-progress, #topic-progress-expanded {
-    left: 210px;
-    }
+  #topic-progress-wrapper.docked {
+    display: none;
+  }
 
+
+  #topic-footer-main-buttons {
+    max-width: 100%;
+  }
 }
+

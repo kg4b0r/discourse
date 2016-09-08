@@ -33,6 +33,19 @@
 // CSS3 properties
 // --------------------------------------------------
 
+// Clearfix
+
+@mixin clearfix() {
+    &:before,
+    &:after {
+        content: "";
+        display: table;
+    }
+    &:after {
+        clear: both;
+    }
+}
+
 // Border radius
 
 @mixin border-radius-all($radius) {
@@ -47,18 +60,10 @@
 
 // Linear gradient
 
+//noinspection CssOptimizeSimilarProperties
 @mixin linear-gradient($start-color, $end-color) {
   background-color: $start-color;
   background-image: linear-gradient(to bottom, $start-color, $end-color);
-}
-
-// Transition
-
-@mixin transition($transition) {
-  .discourse-no-touch & {
-    -webkit-transition: #{$transition};
-            transition: #{$transition};
-  }
 }
 
 // Visibility
@@ -72,30 +77,32 @@
   }
 }
 
-@mixin fades-in($time: 0.5s) {
-  opacity: 0;
-  visibility: hidden;
-  .discourse-no-touch & {
-    -webkit-transition: visibility 0s linear $time, opacity $time linear;
-        -ms-transition: visibility 0s linear $time, opacity $time linear;
-            transition: visibility 0s linear $time, opacity $time linear;
-  }
-}
-
 @mixin visible {
   opacity: 1;
   visibility: visible;
-  -webkit-transition-delay: 0s;
-          transition-delay: 0s;
+  transition-delay: 0s;
 }
 
 //
 // --------------------------------------------------
 
-// Unselectable
+// Unselectable (avoids unwanted selections with iPad, touch laptops, etc)
 
 @mixin unselectable {
   -webkit-user-select: none;
      -moz-user-select: none;
       -ms-user-select: none;
+}
+
+
+// Stuff we repeat
+@mixin post-aside {
+  border-left: 5px solid dark-light-diff($primary, $secondary, 90%, -85%);
+  background-color: blend-primary-secondary(5%);
+}
+
+// We still need -webkit for latest iPhone and Safari
+@mixin transform($transforms) {
+	-webkit-transform: $transforms;
+            transform: $transforms;
 }

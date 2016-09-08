@@ -1,12 +1,48 @@
-import ObjectController from 'discourse/controllers/object';
+import { default as computed, observes } from 'ember-addons/ember-computed-decorators';
 
-// The basic controller for a group
-export default ObjectController.extend({
-  counts: null,
+var Tab = Em.Object.extend({
+  @computed('name')
+  location(name) {
+    return 'group.' + name;
+  },
 
-  // It would be nice if bootstrap marked action lists as selected when their links
-  // were 'active' not the `li` tags.
-  showingIndex: Em.computed.equal('showing', 'index'),
-  showingMembers: Em.computed.equal('showing', 'members')
+  @computed('name')
+  message(name) {
+    return I18n.t('groups.' + name);
+  }
 });
 
+
+export default Ember.Controller.extend({
+  counts: null,
+  showing: 'members',
+  tabs: [
+    Tab.create({ name: 'members', active: true, 'location': 'group.index' }),
+    Tab.create({ name: 'posts' }),
+    Tab.create({ name: 'topics' }),
+    Tab.create({ name: 'mentions' }),
+    Tab.create({ name: 'messages', requiresMembership: true })
+  ],
+
+  @observes('counts')
+  countsChanged() {
+    const counts = this.get('counts');
+    this.get('tabs').forEach(tab => {
+      tab.set('count', counts.get(tab.get('name')));
+    });
+  },
+
+  @observes('showing')
+  showingChanged() {
+    const showing = this.get('showing');
+
+    this.get('tabs').forEach(tab => {
+      tab.set('active', showing === tab.get('name'));
+    });
+  },
+
+  @computed('model.is_member')
+  getTabs(isMember) {
+    return this.get('tabs').filter(t => isMember || !t.get('requiresMembership'));
+  }
+});

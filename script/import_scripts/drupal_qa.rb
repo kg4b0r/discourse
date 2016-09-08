@@ -1,7 +1,6 @@
+require "mysql2"
 require File.expand_path(File.dirname(__FILE__) + "/base.rb")
 require File.expand_path(File.dirname(__FILE__) + "/drupal.rb")
-
-require "mysql2"
 
 class ImportScripts::DrupalQA < ImportScripts::Drupal
 
@@ -57,11 +56,13 @@ class ImportScripts::DrupalQA < ImportScripts::Drupal
 
       break if results.size < 1
 
+      next if all_records_exist? :posts, results.map {|p| "nid:#{p['nid']}"}
+
       create_posts(results, total: total_count, offset: offset) do |row|
         {
           id: "nid:#{row['nid']}",
           user_id: user_id_from_imported_user_id(row['uid']) || -1,
-          category: category_from_imported_category_id((row['tid'] || '').split(',')[0]).try(:name),
+          category: category_id_from_imported_category_id((row['tid'] || '').split(',')[0]),
           raw: row['body'],
           created_at: Time.zone.at(row['created']),
           pinned_at: nil,
@@ -100,6 +101,8 @@ class ImportScripts::DrupalQA < ImportScripts::Drupal
       ", cache_rows: false)
 
       break if results.size < 1
+
+      next if all_records_exist? :posts, results.map {|p| "cid:#{p['cid']}"}
 
       create_posts(results, total: total_count, offset: offset) do |row|
         topic_mapping = topic_lookup_from_imported_post_id("nid:#{row['nid']}")
@@ -152,6 +155,8 @@ class ImportScripts::DrupalQA < ImportScripts::Drupal
 
       break if results.size < 1
 
+      next if all_records_exist? :posts, results.map {|p| "cid:#{p['cid']}"}
+
       create_posts(results, total: total_count, offset: offset) do |row|
         topic_mapping = topic_lookup_from_imported_post_id("nid:#{row['nid']}")
         if topic_mapping && topic_id = topic_mapping[:topic_id]
@@ -201,6 +206,8 @@ class ImportScripts::DrupalQA < ImportScripts::Drupal
       ", cache_rows: false)
 
       break if results.size < 1
+
+      next if all_records_exist? :posts, results.map {|p| "cid:#{p['cid']}"}
 
       create_posts(results, total: total_count, offset: offset) do |row|
         topic_mapping = topic_lookup_from_imported_post_id("nid:#{row['nid']}")

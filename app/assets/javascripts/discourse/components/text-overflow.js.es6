@@ -1,9 +1,12 @@
 export default Ember.Component.extend({
   _parse: function() {
-    this.$().ellipsis();
+    Ember.run.next(null, () => {
+      this.$().find('hr').remove();
+      this.$().ellipsis();
+    });
   }.on('didInsertElement'),
 
-  render: function(buffer) {
+  render(buffer) {
     buffer.push(this.get('text'));
   }
 });

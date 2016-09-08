@@ -11,11 +11,11 @@ a.loading-onebox {
 
 
 .onebox-result {
+  @include post-aside;
+
   margin-top: 15px;
   padding: 12px 25px 12px 12px;
-  border-left: 5px solid darken(scale-color-diff(), 10%);
-  background: scale-color-diff();
-  font-size: 14px;
+  font-size: 1em;
   > .source {
     margin-bottom: 12px;
     margin-right: 10px;
@@ -30,7 +30,7 @@ a.loading-onebox {
         padding-right: 10px;
       }
       position: absolute;
-      font-size: 14px;
+      font-size: 1em;
       img.favicon {
         margin-right: 3px;
       }
@@ -48,7 +48,7 @@ a.loading-onebox {
       margin-right: 10px;
     }
     h3, h4 {
-      margin: 0 !important;
+      margin: 0;
     }
     code {
       max-height: 400px;
@@ -82,17 +82,17 @@ a.loading-onebox {
 
 @mixin onebox-favicon($class, $image) {
   &.#{$class} .source {
-    background-image: image-url("favicons/#{$image}.png");
-    background-repeat: no-repeat;
+    background: image-url("favicons/#{$image}.png") no-repeat;
+    background-size: 16px 16px;
     padding-left: 20px;
   }
 }
 
 aside.onebox {
+  border: 5px solid dark-light-diff($primary, $secondary, 90%, -85%);
+
   padding: 12px 25px 12px 12px;
-  border-left: 5px solid darken(scale-color-diff(), 10%);
-  background: scale-color-diff();
-  font-size: 14px;
+  font-size: 1em;
 
   header {
     a[href] {
@@ -105,7 +105,12 @@ aside.onebox {
   @include onebox-favicon('twitterstatus', 'twitter');
   @include onebox-favicon('wikipedia', 'wikipedia');
   @include onebox-favicon('githubblob', 'github');
+  @include onebox-favicon('githubcommit', 'github');
+  @include onebox-favicon('githubpullrequest', 'github');
+  @include onebox-favicon('githubissue', 'github');
+  @include onebox-favicon('githubgist', 'github');
   @include onebox-favicon('amazon', 'amazon');
+  @include onebox-favicon('googledocs', 'google_branding/logo_drive_48px');
 
 
   .onebox-body {
@@ -113,37 +118,83 @@ aside.onebox {
 
     h3, h4 {
       font-size: 1.17em;
-      margin: 10px 0 !important;
+      margin: 10px 0;
     }
 
     a[href] {
-      color: scale-color($tertiary, $lightness: -20%);
+      color: dark-light-choose(scale-color($tertiary, $lightness: -20%), $tertiary);
       text-decoration: none;
     }
 
     a[href]:visited {
-      color: scale-color($tertiary, $lightness: -20%);
+      color: dark-light-choose(scale-color($tertiary, $lightness: -20%), $tertiary);
     }
 
     img {
       max-height: 80%;
-      max-width: 25%;
+      max-width: 20%;
       height: auto;
       float: left;
       margin-right: 10px;
     }
+
+    .tweet-images {
+      display: block;
+      clear: both;
+
+      img.tweet-image {
+        margin-top: 1em;
+        max-width: 100%;
+        max-height: 100%;
+        float: none;
+      }
+    }
   }
 }
 
-.onebox-avatar {
-  height: 90px !important;
-  width: 90px !important;
+@mixin gdocs-logo($type) {
+  &.g-#{$type}-logo {
+    background: image-url("favicons/google_branding/logo_#{$type}_48px.png") no-repeat;
+  }
+}
+
+.googledocs-onebox-logo {
+  width: 60px;
+  height: 50px;
+  float: left;
+  @include gdocs-logo('docs');
+  @include gdocs-logo('forms');
+  @include gdocs-logo('sheets');
+  @include gdocs-logo('slides');
+  @include gdocs-logo('calendar');
+  @include gdocs-logo('drive');
+}
+
+// Google Calendar Placeholder
+.gdocs-onebox-splash {
+  background-color: blend-primary-secondary(30%);
+  color: $primary;
+  border: 1px inset $primary;
+  .gdocs-onebox-logo {
+    display: inline-block;
+    width: 128px;
+    height: 128px;
+    &.g-calendar-logo {
+      background: image-url("favicons/google_branding/logo_calendar_128px.png") no-repeat;
+    }
+  }
+}
+
+aside.onebox .onebox-body .onebox-avatar {
+  max-height: none;
+  max-width: none;
+  height: 90px;
+  width: 90px;
 }
 
 blockquote {
   aside.onebox {
-    background: darken(scale-color-diff(), 5%);
-    border-left: 5px solid darken(scale-color-diff(), 12%);
+    @include post-aside;
   }
 }
 
@@ -153,7 +204,6 @@ pre.onebox code ol.lines li:before {
   display:inline-block;
   width:35px;
   left: -40px;
-  background: #F7F7F7;
   color:#AFAFAF;
   text-align:right;
   padding-right:5px;
@@ -168,8 +218,10 @@ pre.onebox code ol{
 	margin-left:0px;
 	line-height:1.5em;
 }
+pre.onebox code {
+  background-color: dark-light-choose(#fff, #000);
+}
 pre.onebox code li{
-	background-color:#fff;
 	padding-left:5px;
 }
 
@@ -188,7 +240,7 @@ pre.onebox code ol.lines li {
 }
 
 pre.onebox code li.selected{
-	background-color:#F8EEC7
+	background-color: dark-light-choose(#F8EEC7, #541);
 }
 
 pre.onebox code {
@@ -231,4 +283,80 @@ pre.onebox code {
 
 .onebox-body .github-content-right{
   margin-left:100px;
+}
+
+//Onebox - Twitter - Status
+aside.onebox.twitterstatus .onebox-body {
+  h4 {
+    margin-bottom: 0;
+  }
+}
+.onebox.twitterstatus {
+  .thumbnail {
+    float: left;
+  }
+  p, .tweet {
+    float: left;
+    display: inline-block;
+    white-space: pre-wrap;
+    padding-top: 3px;
+    width: 85%;
+  }
+  .date {
+    clear: left;
+    padding-top: 5px;
+  }
+}
+
+// Onebox - Imgur - Album
+.onebox.imgur-album {
+  .outer-box {
+    position: absolute;
+    z-index: 935;
+    height: 30px;
+    overflow: hidden;
+    font-size: 12px;
+    color: #fff;
+    background-color: rgba(0, 0, 0, 0.6);
+    text-overflow: ellipsis;
+    max-width: 100%;
+
+    .inner-box {
+      padding-left: 10px;
+      padding-right: 10px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      word-wrap: normal;
+      white-space: nowrap;
+
+      .album-title {
+        width: 100%;
+        font-size: 13px;
+        line-height: 30px;
+        color: #ccc;
+        text-decoration: none;
+      }
+    }
+  }
+}
+
+// resize stackexchange onebox image
+aside.onebox.stackexchange .onebox-body {
+  img {
+    max-height: 60%;
+    max-width: 10%;
+  }
+
+  .tags {
+    color: gray;
+  }
+}
+
+.onebox-metadata {
+  color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
+}
+
+// mobile specific style
+.mobile-view article.onebox-body {
+  border-top: none;
 }

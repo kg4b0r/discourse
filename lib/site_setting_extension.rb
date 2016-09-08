@@ -1,7 +1,14 @@
 require_dependency 'enum'
 require_dependency 'site_settings/db_provider'
+require 'site_setting_validations'
 
 module SiteSettingExtension
+  include SiteSettingValidations
+
+  # For plugins, so they can tell if a feature is supported
+  def supported_types
+    [:email, :username, :list, :enum]
+  end
 
   # part 1 of refactor, centralizing the dependency here
   def provider=(val)
@@ -14,7 +21,18 @@ module SiteSettingExtension
   end
 
   def types
-    @types ||= Enum.new(:string, :time, :fixnum, :float, :bool, :null, :enum, :list)
+    @types ||= Enum.new(string: 1,
+                        time: 2,
+                        fixnum: 3,
+                        float: 4,
+                        bool: 5,
+                        null: 6,
+                        enum: 7,
+                        list: 8,
+                        url_list: 9,
+                        host_list: 10,
+                        category_list: 11,
+                        value_list: 12)
   end
 
   def mutex
@@ -38,12 +56,16 @@ module SiteSettingExtension
     @enums ||= {}
   end
 
-  def lists
-    @lists ||= []
+  def static_types
+    @static_types ||= {}
   end
 
   def choices
     @choices ||= {}
+  end
+
+  def shadowed_settings
+    @shadowed_settings ||= []
   end
 
   def hidden_settings
@@ -52,6 +74,14 @@ module SiteSettingExtension
 
   def refresh_settings
     @refresh_settings ||= []
+  end
+
+  def client_settings
+    @client_settings ||= []
+  end
+
+  def previews
+    @previews ||= {}
   end
 
   def validators
@@ -64,43 +94,63 @@ module SiteSettingExtension
       self.defaults[name] = default
       categories[name] = opts[:category] || :uncategorized
       current_value = current.has_key?(name) ? current[name] : default
-      if opts[:enum]
-        enum = opts[:enum]
+
+      if enum = opts[:enum]
         enums[name] = enum.is_a?(String) ? enum.constantize : enum
+        opts[:type] ||= :enum
       end
-      if opts[:choices]
+
+      if new_choices = opts[:choices]
+
+        new_choices = eval(new_choices) if new_choices.is_a?(String)
+
         choices.has_key?(name) ?
-          choices[name].concat(opts[:choices]) :
-          choices[name] = opts[:choices]
+          choices[name].concat(new_choices) :
+          choices[name] = new_choices
       end
-      if opts[:type] == 'list'
-        lists << name
+
+      if type = opts[:type]
+        static_types[name.to_sym] = type.to_sym
       end
+
       if opts[:hidden]
         hidden_settings << name
       end
+
+      if opts[:shadowed_by_global] && GlobalSetting.respond_to?(name)
+        val = GlobalSetting.send(name)
+
+        unless val.nil? || (val == ''.freeze)
+          hidden_settings << name
+          shadowed_settings << name
+          current_value = val
+        end
+      end
+
       if opts[:refresh]
         refresh_settings << name
       end
 
-      if validator_type = validator_for(opts[:type] || get_data_type(name, defaults[name]))
-        validators[name] = {class: validator_type, opts: opts}
+      if opts[:preview]
+        previews[name] = opts[:preview]
+      end
+
+      opts[:validator] = opts[:validator].try(:constantize)
+      type = opts[:type] || get_data_type(name, defaults[name])
+
+      if validator_type = opts[:validator] || validator_for(type)
+        validators[name] = { class: validator_type, opts: opts }
       end
 
       current[name] = current_value
-      setup_methods(name, current_value)
+      setup_methods(name)
     end
   end
 
   # just like a setting, except that it is available in javascript via DiscourseSession
   def client_setting(name, default = nil, opts = {})
     setting(name, default, opts)
-    @client_settings ||= []
-    @client_settings << name
-  end
-
-  def client_settings
-    @client_settings ||= []
+    client_settings << name.to_sym
   end
 
   def settings_hash
@@ -124,7 +174,7 @@ module SiteSettingExtension
   # Retrieve all settings
   def all_settings(include_hidden=false)
     @defaults
-      .reject{|s, _| hidden_settings.include?(s) || include_hidden}
+      .reject{|s, _| hidden_settings.include?(s) && !include_hidden}
       .map do |s, v|
         value = send(s)
         type = types[get_data_type(s, value)]
@@ -134,9 +184,16 @@ module SiteSettingExtension
           default: v.to_s,
           type: type.to_s,
           value: value.to_s,
-          category: categories[s]
+          category: categories[s],
+          preview: previews[s]
         }
-        opts.merge!({valid_values: enum_class(s).values, translate_names: enum_class(s).translate_names?}) if type == :enum
+
+        if type == :enum && enum_class(s)
+          opts.merge!({valid_values: enum_class(s).values, translate_names: enum_class(s).translate_names?})
+        elsif type == :enum
+          opts.merge!({valid_values: choices[s].map{|c| {name: c, value: c}}, translate_names: false})
+        end
+
         opts[:choices] = choices[s] if choices.has_key? s
         opts
       end
@@ -147,7 +204,10 @@ module SiteSettingExtension
   end
 
   def self.client_settings_cache_key
-    "client_settings_json"
+    # NOTE: we use the git version in the key to ensure
+    # that we don't end up caching the incorrect version
+    # in cases where we are cycling unicorns
+    "client_settings_json_#{Discourse.git_version}"
   end
 
   # refresh all the site settings
@@ -156,27 +216,24 @@ module SiteSettingExtension
       ensure_listen_for_changes
       old = current
 
-      new_hash =  Hash[*(provider.all.map{ |s|
-        [s.name.intern, convert(s.value,s.data_type)]
+      new_hash =  Hash[*(provider.all.map { |s|
+        [s.name.intern, convert(s.value, s.data_type, s.name)]
       }.to_a.flatten)]
 
       # add defaults, cause they are cached
       new_hash = defaults.merge(new_hash)
 
-      changes,deletions = diff_hash(new_hash, old)
+      # add shadowed
+      shadowed_settings.each { |ss| new_hash[ss] = GlobalSetting.send(ss) }
 
-      if deletions.length > 0 || changes.length > 0
-        changes.each do |name, val|
-          current[name] = val
-        end
-        deletions.each do |name,val|
-          current[name] = defaults[name]
-        end
-      end
+      changes, deletions = diff_hash(new_hash, old)
+
+      changes.each   { |name, val| current[name] = val }
+      deletions.each { |name, val| current[name] = defaults[name] }
+
       clear_cache!
     end
   end
-
 
   def ensure_listen_for_changes
     unless @subscribed
@@ -221,8 +278,8 @@ module SiteSettingExtension
     clear_cache!
   end
 
-  def add_override!(name,val)
-    type = get_data_type(name, defaults[name])
+  def add_override!(name, val)
+    type = get_data_type(name, defaults[name.to_sym])
 
     if type == types[:bool] && val != true && val != false
       val = (val == "t" || val == "true") ? 't' : 'f'
@@ -237,7 +294,12 @@ module SiteSettingExtension
     end
 
     if type == types[:enum]
-      raise Discourse::InvalidParameters.new(:value) unless enum_class(name).valid_value?(val)
+      val = val.to_i if defaults[name.to_sym].is_a?(Fixnum)
+      if enum_class(name)
+        raise Discourse::InvalidParameters.new(:value) unless enum_class(name).valid_value?(val)
+      else
+        raise Discourse::InvalidParameters.new(:value) unless choices[name].include?(val)
+      end
     end
 
     if v = validators[name]
@@ -247,13 +309,22 @@ module SiteSettingExtension
       end
     end
 
+    if self.respond_to? "validate_#{name}"
+      send("validate_#{name}", val)
+    end
+
     provider.save(name, val, type)
-    current[name] = convert(val, type)
+    current[name] = convert(val, type, name)
+    notify_clients!(name) if client_settings.include? name
     clear_cache!
   end
 
   def notify_changed!
     MessageBus.publish('/site_settings', {process: process_id})
+  end
+
+  def notify_clients!(name)
+    MessageBus.publish('/client_settings', {name: name, value: self.send(name)})
   end
 
   def has_setting?(name)
@@ -262,6 +333,18 @@ module SiteSettingExtension
 
   def requires_refresh?(name)
     refresh_settings.include?(name.to_sym)
+  end
+
+  def is_valid_data?(name, value)
+    valid = true
+    type = get_data_type(name, defaults[name.to_sym])
+
+    if type == types[:fixnum]
+      # validate fixnum
+      valid = false unless value.to_i.is_a?(Fixnum)
+    end
+
+    valid
   end
 
   def filter_value(name, value)
@@ -273,24 +356,30 @@ module SiteSettingExtension
       }
       value = domain_array.join("|")
     end
-    return value
+    value
   end
 
   def set(name, value)
-    if has_setting?(name)
+    if has_setting?(name) && is_valid_data?(name, value)
       value = filter_value(name, value)
       self.send("#{name}=", value)
       Discourse.request_refresh! if requires_refresh?(name)
     else
-      raise ArgumentError.new("No setting named #{name} exists")
+      raise ArgumentError.new("Either no setting named '#{name}' exists or value provided is invalid")
     end
+  end
+
+  def set_and_log(name, value, user=Discourse.system_user)
+    prev_value = send(name)
+    set(name, value)
+    StaffActionLogger.new(user).log_site_setting_change(name, prev_value, value) if has_setting?(name)
   end
 
   protected
 
   def clear_cache!
-    SiteText.text_for_cache.clear
     Rails.cache.delete(SiteSettingExtension.client_settings_cache_key)
+    Site.clear_anon_cache!
   end
 
   def diff_hash(new_hash, old)
@@ -308,10 +397,14 @@ module SiteSettingExtension
     [changes,deletions]
   end
 
-  def get_data_type(name,val)
+  def get_data_type(name, val)
     return types[:null] if val.nil?
-    return types[:enum] if enums[name]
-    return types[:list] if lists.include? name
+
+    # Some types are just for validations like email.
+    # Only consider it valid if includes in `types`
+    if static_type = static_types[name.to_sym]
+      return types[static_type] if types.keys.include?(static_type)
+    end
 
     case val
     when String
@@ -327,19 +420,21 @@ module SiteSettingExtension
     end
   end
 
-  def convert(value, type)
+  def convert(value, type, name)
     case type
     when types[:float]
       value.to_f
     when types[:fixnum]
       value.to_i
-    when types[:string], types[:list], types[:enum]
-      value
     when types[:bool]
       value == true || value == "t" || value == "true"
     when types[:null]
       nil
+    when types[:enum]
+      defaults[name.to_sym].is_a?(Fixnum) ? value.to_i : value
     else
+      return value if types[type]
+      # Otherwise it's a type error
       raise ArgumentError.new :type
     end
   end
@@ -349,17 +444,40 @@ module SiteSettingExtension
       'email'        => EmailSettingValidator,
       'username'     => UsernameSettingValidator,
       types[:fixnum] => IntegerSettingValidator,
-      types[:string] => StringSettingValidator
+      types[:string] => StringSettingValidator,
+      'list' => StringSettingValidator,
+      'enum' => StringSettingValidator
     }
     @validator_mapping[type_name]
   end
 
+  DEPRECATED_SETTINGS = [
+    ['use_https', 'force_https', '1.7']
+  ]
 
-  def setup_methods(name, current_value)
+  def setup_deprecated_methods
+    DEPRECATED_SETTINGS.each do |old_setting, new_setting, version|
+      define_singleton_method old_setting do
+        logger.warn("`SiteSetting.#{old_setting}` has been deprecated and will be removed in the #{version} Release. Please use `SiteSetting.#{new_setting}` instead")
+        self.public_send new_setting
+      end
 
-    clean_name = name.to_s.sub("?", "")
+      define_singleton_method "#{old_setting}?" do
+        logger.warn("`SiteSetting.#{old_setting}?` has been deprecated and will be removed in the #{version} Release. Please use `SiteSetting.#{new_setting}?` instead")
+        self.public_send "#{new_setting}?"
+      end
 
-    eval "define_singleton_method :#{clean_name} do
+      define_singleton_method "#{old_setting}=" do |val|
+        logger.warn("`SiteSetting.#{old_setting}=` has been deprecated and will be removed in the #{version} Release. Please use `SiteSetting.#{new_setting}=` instead")
+        self.public_send "#{new_setting}=", val
+      end
+    end
+  end
+
+  def setup_methods(name)
+    clean_name = name.to_s.sub("?", "").to_sym
+
+    define_singleton_method clean_name do
       c = @containers[provider.current_site]
       if c
         c[name]
@@ -369,14 +487,13 @@ module SiteSettingExtension
       end
     end
 
-    define_singleton_method :#{clean_name}? do
-      #{clean_name}
+    define_singleton_method "#{clean_name}?" do
+      self.send clean_name
     end
 
-    define_singleton_method :#{clean_name}= do |val|
-      add_override!(:#{name}, val)
+    define_singleton_method "#{clean_name}=" do |val|
+      add_override!(name, val)
     end
-    "
   end
 
   def enum_class(name)
@@ -388,8 +505,13 @@ module SiteSettingExtension
       url = "http://#{url}" if URI.parse(url).scheme.nil?
       url = URI.parse(url).host
     end
-    return url
+    url
+  end
+
+  private
+
+  def logger
+    Rails.logger
   end
 
 end
-

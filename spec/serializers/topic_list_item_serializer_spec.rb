@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'rails_helper'
 require_dependency 'post_action'
 
 describe TopicListItemSerializer do
@@ -13,7 +13,7 @@ describe TopicListItemSerializer do
     topic.posters = []
     serialized = TopicListItemSerializer.new(topic, scope: Guardian.new, root: false).as_json
 
-    serialized[:title].should == "test"
-    serialized[:bumped].should == true
+    expect(serialized[:title]).to eq("test")
+    expect(serialized[:bumped]).to eq(true)
   end
 end

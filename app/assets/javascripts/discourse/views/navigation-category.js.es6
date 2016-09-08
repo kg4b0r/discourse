@@ -1,5 +1,5 @@
 import AddCategoryClass from 'discourse/mixins/add-category-class';
 
-export default Em.View.extend(AddCategoryClass, {
-  categoryId: Em.computed.alias('controller.category.id'),
+export default Ember.View.extend(AddCategoryClass, {
+  categoryFullSlug: Ember.computed.alias('controller.category.fullSlug')
 });

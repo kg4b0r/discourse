@@ -1,3 +1,7 @@
+# Whe use ActiveSupport mb_chars from here to properly support non ascii downcase
+# TODO remove when ruby 2.4 lands
+require 'active_support/core_ext/string/multibyte'
+
 #
 # Given a string, tell us whether or not is acceptable.
 #
@@ -30,7 +34,7 @@ class TextSentinel
     else
       (SiteSetting.min_topic_title_length.to_f * ENTROPY_SCALE).to_i
     end
-    TextSentinel.new(text, min_entropy: entropy, max_word_length: SiteSetting.max_word_length)
+    TextSentinel.new(text, min_entropy: entropy, max_word_length: SiteSetting.title_max_word_length)
   end
 
   # Entropy is a number of how many unique characters the string needs.
@@ -67,13 +71,13 @@ class TextSentinel
 
   def seems_unpretentious?
     # Don't allow super long words if there is a word length maximum
-    @opts[:max_word_length].blank? || @text.split(/\s|\/|-/).map(&:size).max <= @opts[:max_word_length]
+    @opts[:max_word_length].blank? || @text.split(/\s|\/|-|\./).map(&:size).max <= @opts[:max_word_length]
   end
 
 
   def seems_quiet?
-    # We don't allow all upper case content in english
-    not((@text =~ /[A-Z]+/) && !(@text =~ /[^[:ascii:]]/) && (@text == @text.upcase))
+    # We don't allow all upper case content
+    SiteSetting.allow_uppercase_posts || @text == @text.mb_chars.downcase.to_s || @text != @text.mb_chars.upcase.to_s
   end
 
 end

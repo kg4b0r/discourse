@@ -8,11 +8,13 @@ require_dependency 'crawler_detection'
 require_dependency 'json_error'
 require_dependency 'letter_avatar'
 require_dependency 'distributed_cache'
+require_dependency 'global_path'
 
 class ApplicationController < ActionController::Base
   include CurrentUser
   include CanonicalURL::ControllerExtensions
   include JsonError
+  include GlobalPath
 
   serialization_scope :guardian
 
@@ -31,6 +33,7 @@ class ApplicationController < ActionController::Base
   end
 
   before_filter :set_current_user_for_logs
+  before_filter :clear_notifications
   before_filter :set_locale
   before_filter :set_mobile_view
   before_filter :inject_preview_style
@@ -38,8 +41,10 @@ class ApplicationController < ActionController::Base
   before_filter :block_if_readonly_mode
   before_filter :authorize_mini_profiler
   before_filter :preload_json
-  before_filter :check_xhr
   before_filter :redirect_to_login_if_required
+  before_filter :check_xhr
+  after_filter  :add_readonly_header
+  after_filter  :perform_refresh_session
 
   layout :set_layout
 
@@ -51,93 +56,142 @@ class ApplicationController < ActionController::Base
     @use_crawler_layout ||= (has_escaped_fragment? || CrawlerDetection.crawler?(request.user_agent))
   end
 
+  def add_readonly_header
+    response.headers['Discourse-Readonly'] = 'true' if Discourse.readonly_mode?
+  end
+
+  def perform_refresh_session
+    refresh_session(current_user)
+  end
+
+  def slow_platform?
+    request.user_agent =~ /Android/
+  end
+
   def set_layout
     use_crawler_layout? ? 'crawler' : 'application'
   end
 
-  rescue_from Exception do |exception|
-    unless [ActiveRecord::RecordNotFound,
-            ActionController::RoutingError,
-            ActionController::UnknownController,
-            AbstractController::ActionNotFound].include? exception.class
-      begin
-        ErrorLog.report_async!(exception, self, request, current_user)
-      rescue
-        # dont care give up
-      end
-    end
-    raise
-  end
-
   # Some exceptions
-  class RenderEmpty < Exception; end
+  class RenderEmpty < StandardError; end
 
-  # Render nothing unless we are an xhr request
+  # Render nothing
   rescue_from RenderEmpty do
     render 'default/empty'
   end
 
+  def render_rate_limit_error(e)
+    render_json_error e.description, type: :rate_limit, status: 429
+  end
+
   # If they hit the rate limiter
   rescue_from RateLimiter::LimitExceeded do |e|
+    render_rate_limit_error(e)
+  end
 
-    time_left = ""
-    if e.available_in < 1.minute.to_i
-      time_left = I18n.t("rate_limiter.seconds", count: e.available_in)
-    elsif e.available_in < 1.hour.to_i
-      time_left = I18n.t("rate_limiter.minutes", count: (e.available_in / 1.minute.to_i))
-    else
-      time_left = I18n.t("rate_limiter.hours", count: (e.available_in / 1.hour.to_i))
-    end
-
-    render json: {errors: [I18n.t("rate_limiter.too_many_requests", time_left: time_left)]}, status: 429
+  rescue_from PG::ReadOnlySqlTransaction do |e|
+    Discourse.received_readonly!
+    raise Discourse::ReadOnly
   end
 
   rescue_from Discourse::NotLoggedIn do |e|
     raise e if Rails.env.test?
-
-    if request.get?
-      redirect_to "/"
+    if (request.format && request.format.json?) || request.xhr? || !request.get?
+      rescue_discourse_actions(:not_logged_in, 403, true)
     else
-      render status: 403, json: failed_json.merge(message: I18n.t(:not_logged_in))
+      rescue_discourse_actions(:not_found, 404)
     end
-
   end
 
-  rescue_from Discourse::NotFound do
-    rescue_discourse_actions("[error: 'not found']", 404) # TODO: this breaks json responses
+  class PluginDisabled < StandardError; end
+
+  # Handles requests for giant IDs that throw pg exceptions
+  rescue_from RangeError do |e|
+    if e.message =~ /ActiveRecord::ConnectionAdapters::PostgreSQL::OID::Integer/
+      rescue_discourse_actions(:not_found, 404)
+    else
+      raise e
+    end
+  end
+
+  rescue_from Discourse::NotFound, PluginDisabled  do
+    rescue_discourse_actions(:not_found, 404)
   end
 
   rescue_from Discourse::InvalidAccess do
-    rescue_discourse_actions("[error: 'invalid access']", 403, true) # TODO: this breaks json responses
+    rescue_discourse_actions(:invalid_access, 403, true)
   end
 
   rescue_from Discourse::ReadOnly do
-    render status: 405, json: failed_json.merge(message: I18n.t("read_only_mode_enabled"))
+    render_json_error I18n.t('read_only_mode_enabled'), type: :read_only, status: 405
   end
 
-  def rescue_discourse_actions(message, error, include_ember=false)
-    if request.format && request.format.json?
-      # TODO: this doesn't make sense. Stuffing an html page into a json response will cause
-      #       $.parseJSON to fail in the browser. Also returning text like "[error: 'invalid access']"
-      #       from the above rescue_from blocks will fail because that isn't valid json.
-      render status: error, layout: false, text: (error == 404) ? build_not_found_page(error) : message
+  def rescue_discourse_actions(type, status_code, include_ember=false)
+
+    if (request.format && request.format.json?) || (request.xhr?)
+      # HACK: do not use render_json_error for topics#show
+      if request.params[:controller] == 'topics' && request.params[:action] == 'show'
+        return render status: status_code, layout: false, text: (status_code == 404 || status_code == 410) ? build_not_found_page(status_code) : I18n.t(type)
+      end
+
+      render_json_error I18n.t(type), type: type, status: status_code
     else
-      render text: build_not_found_page(error, include_ember ? 'application' : 'no_js')
+      render text: build_not_found_page(status_code, include_ember ? 'application' : 'no_ember')
+    end
+  end
+
+  # If a controller requires a plugin, it will raise an exception if that plugin is
+  # disabled. This allows plugins to be disabled programatically.
+  def self.requires_plugin(plugin_name)
+    before_filter do
+      raise PluginDisabled.new if Discourse.disabled_plugin_names.include?(plugin_name)
     end
   end
 
   def set_current_user_for_logs
     if current_user
       Logster.add_to_env(request.env,"username",current_user.username)
+      response.headers["X-Discourse-Username"] = current_user.username
+    end
+    response.headers["X-Discourse-Route"] = "#{controller_name}/#{action_name}"
+  end
+
+  def clear_notifications
+    if current_user && !Discourse.readonly_mode?
+
+      cookie_notifications = cookies['cn'.freeze]
+      notifications = request.headers['Discourse-Clear-Notifications'.freeze]
+
+      if cookie_notifications
+        if notifications.present?
+          notifications += "," << cookie_notifications
+        else
+          notifications = cookie_notifications
+        end
+      end
+
+      if notifications.present?
+        notification_ids = notifications.split(",").map(&:to_i)
+        count = Notification.where(user_id: current_user.id, id: notification_ids, read: false).update_all(read: true)
+        if count > 0
+          current_user.publish_notifications_state
+        end
+        cookies.delete('cn')
+      end
     end
   end
 
   def set_locale
-    I18n.locale = if SiteSetting.allow_user_locale && current_user && current_user.locale.present?
-                    current_user.locale
-                  else
-                    SiteSetting.default_locale
-                  end
+    if !current_user
+      if SiteSetting.set_locale_from_accept_language_header
+        I18n.locale = locale_from_header
+      else
+        I18n.locale = SiteSetting.default_locale
+      end
+    else
+      I18n.locale = current_user.effective_locale
+    end
+    I18n.ensure_all_loaded!
   end
 
   def store_preloaded(key, json)
@@ -151,8 +205,12 @@ class ApplicationController < ActionController::Base
   # If we are rendering HTML, preload the session data
   def preload_json
     # We don't preload JSON on xhr or JSON request
-    return if request.xhr?
+    return if request.xhr? || request.format.json?
 
+    # if we are posting in makes no sense to preload
+    return if request.method != "GET"
+
+    # TODO should not be invoked on redirection so this should be further deferred
     preload_anonymous_data
 
     if current_user
@@ -167,13 +225,22 @@ class ApplicationController < ActionController::Base
 
   def inject_preview_style
     style = request['preview-style']
-    if style.blank?
-      session[:preview_style] = nil
-    elsif style == "default"
-      session[:preview_style] = ""
+
+    if style.nil?
+      session[:preview_style] = cookies[:preview_style]
     else
-      session[:preview_style] = style
+      cookies.delete(:preview_style)
+
+      if style.blank? || style == 'default'
+        session[:preview_style] = nil
+      else
+        session[:preview_style] = style
+        if request['sticky']
+          cookies[:preview_style] = style
+        end
+      end
     end
+
   end
 
   def disable_customization
@@ -184,9 +251,13 @@ class ApplicationController < ActionController::Base
     @guardian ||= Guardian.new(current_user)
   end
 
-  def serialize_data(obj, serializer, opts={})
+  def current_homepage
+    current_user ? SiteSetting.homepage : SiteSetting.anonymous_homepage
+  end
+
+  def serialize_data(obj, serializer, opts=nil)
     # If it's an array, apply the serializer as an each_serializer to the elements
-    serializer_opts = {scope: guardian}.merge!(opts)
+    serializer_opts = {scope: guardian}.merge!(opts || {})
     if obj.respond_to?(:to_ary)
       serializer_opts[:each_serializer] = serializer
       ActiveModel::ArraySerializer.new(obj.to_ary, serializer_opts).as_json
@@ -199,16 +270,26 @@ class ApplicationController < ActionController::Base
   # 20% slower than calling MultiJSON.dump ourselves. I'm not sure why
   # Rails doesn't call MultiJson.dump when you pass it json: obj but
   # it seems we don't need whatever Rails is doing.
-  def render_serialized(obj, serializer, opts={})
-    render_json_dump(serialize_data(obj, serializer, opts))
+  def render_serialized(obj, serializer, opts=nil)
+    render_json_dump(serialize_data(obj, serializer, opts), opts)
   end
 
-  def render_json_dump(obj)
-    render json: MultiJson.dump(obj)
+  def render_json_dump(obj, opts=nil)
+    opts ||= {}
+    if opts[:rest_serializer]
+      obj['__rest_serializer'] = "1"
+      opts.each do |k, v|
+        obj[k] = v if k.to_s.start_with?("refresh_")
+      end
+
+      obj['extras'] = opts[:extras] if opts[:extras]
+    end
+
+    render json: MultiJson.dump(obj), status: opts[:status] || 200
   end
 
   def can_cache_content?
-    !current_user.present?
+    current_user.blank? && flash[:authentication_data].blank?
   end
 
   # Our custom cache method
@@ -217,18 +298,20 @@ class ApplicationController < ActionController::Base
     Middleware::AnonymousCache.anon_cache(request.env, time_length)
   end
 
-  def fetch_user_from_params(opts=nil)
+  def fetch_user_from_params(opts=nil, eager_load = [])
     opts ||= {}
     user = if params[:username]
-      username_lower = params[:username].downcase
-      username_lower.gsub!(/\.json$/, '')
-      find_opts = {username_lower: username_lower}
-      find_opts[:active] = true unless opts[:include_inactive]
-      User.find_by(find_opts)
+      username_lower = params[:username].downcase.chomp('.json')
+      find_opts = { username_lower: username_lower }
+      find_opts[:active] = true unless opts[:include_inactive] || current_user.try(:staff?)
+      result = User
+      (result = result.includes(*eager_load)) if !eager_load.empty?
+      result.find_by(find_opts)
     elsif params[:external_id]
-      SingleSignOnRecord.find_by(external_id: params[:external_id]).try(:user)
+      external_id = params[:external_id].chomp('.json')
+      SingleSignOnRecord.find_by(external_id: external_id).try(:user)
     end
-    raise Discourse::NotFound.new if user.blank?
+    raise Discourse::NotFound if user.blank?
 
     guardian.ensure_can_see!(user)
     user
@@ -237,32 +320,55 @@ class ApplicationController < ActionController::Base
   def post_ids_including_replies
     post_ids = params[:post_ids].map {|p| p.to_i}
     if params[:reply_post_ids]
-      post_ids << PostReply.where(post_id: params[:reply_post_ids].map {|p| p.to_i}).pluck(:reply_id)
-      post_ids.flatten!
-      post_ids.uniq!
+      post_ids |= PostReply.where(post_id: params[:reply_post_ids].map {|p| p.to_i}).pluck(:reply_id)
     end
     post_ids
   end
 
+  def no_cookies
+    # do your best to ensure response has no cookies
+    # longer term we may want to push this into middleware
+    headers.delete 'Set-Cookie'
+    request.session_options[:skip] = true
+  end
+
   private
+
+    def locale_from_header
+      begin
+        # Rails I18n uses underscores between the locale and the region; the request
+        # headers use hyphens.
+        require 'http_accept_language' unless defined? HttpAcceptLanguage
+        available_locales = I18n.available_locales.map { |locale| locale.to_s.tr('_', '-') }
+        parser = HttpAcceptLanguage::Parser.new(request.env["HTTP_ACCEPT_LANGUAGE"])
+        parser.language_region_compatible_from(available_locales).tr('-', '_')
+      rescue
+        # If Accept-Language headers are not set.
+        I18n.default_locale
+      end
+    end
 
     def preload_anonymous_data
       store_preloaded("site", Site.json_for(guardian))
       store_preloaded("siteSettings", SiteSetting.client_settings_json)
       store_preloaded("customHTML", custom_html_json)
       store_preloaded("banner", banner_json)
+      store_preloaded("customEmoji", custom_emoji)
+      store_preloaded("translationOverrides", I18n.client_overrides_json(I18n.locale))
     end
 
     def preload_current_user_data
       store_preloaded("currentUser", MultiJson.dump(CurrentUserSerializer.new(current_user, scope: guardian, root: false)))
-      serializer = ActiveModel::ArraySerializer.new(TopicTrackingState.report([current_user.id]), each_serializer: TopicTrackingStateSerializer)
+      report = TopicTrackingState.report(current_user.id)
+      serializer = ActiveModel::ArraySerializer.new(report, each_serializer: TopicTrackingStateSerializer)
       store_preloaded("topicTrackingStates", MultiJson.dump(serializer))
     end
 
     def custom_html_json
+      target = view_context.mobile_view? ? :mobile : :desktop
       data = {
-        top: SiteText.text_for(:top),
-        footer: SiteCustomization.custom_footer(session[:preview_style])
+        top: SiteCustomization.custom_top(session[:preview_style], target),
+        footer: SiteCustomization.custom_footer(session[:preview_style], target)
       }
 
       if DiscoursePluginRegistry.custom_html
@@ -277,7 +383,6 @@ class ApplicationController < ActionController::Base
     end
 
     def banner_json
-
       json = ApplicationController.banner_json_cache["json"]
 
       unless json
@@ -289,8 +394,20 @@ class ApplicationController < ActionController::Base
       json
     end
 
-    def render_json_error(obj)
-      render json: MultiJson.dump(create_errors_json(obj)), status: 422
+    def custom_emoji
+      serializer = ActiveModel::ArraySerializer.new(Emoji.custom, each_serializer: EmojiSerializer)
+      MultiJson.dump(serializer)
+    end
+
+    # Render action for a JSON error.
+    #
+    # obj      - a translated string, an ActiveRecord model, or an array of translated strings
+    # opts:
+    #   type   - a machine-readable description of the error
+    #   status - HTTP status code to return
+    def render_json_error(obj, opts={})
+      opts = { status: opts } if opts.is_a?(Fixnum)
+      render json: MultiJson.dump(create_errors_json(obj, opts[:type])), status: opts[:status] || 422
     end
 
     def success_json
@@ -335,7 +452,7 @@ class ApplicationController < ActionController::Base
 
     def check_xhr
       # bypass xhr check on PUT / POST / DELETE provided api key is there, otherwise calling api is annoying
-      return if !request.get? && api_key_valid?
+      return if !request.get? && is_api?
       raise RenderEmpty.new unless ((request.format && request.format.json?) || request.xhr?)
     end
 
@@ -343,24 +460,44 @@ class ApplicationController < ActionController::Base
       raise Discourse::NotLoggedIn.new unless current_user.present?
     end
 
-    def redirect_to_login_if_required
-      return if current_user || (request.format.json? && api_key_valid?)
+    def ensure_staff
+      raise Discourse::InvalidAccess.new unless current_user && current_user.staff?
+    end
 
-      redirect_to :login if SiteSetting.login_required?
+    def destination_url
+      request.original_url unless request.original_url =~ /uploads/
+    end
+
+    def redirect_to_login_if_required
+      return if current_user || (request.format.json? && is_api?)
+
+      # redirect user to the SSO page if we need to log in AND SSO is enabled
+      if SiteSetting.login_required?
+        if SiteSetting.enable_sso?
+          # save original URL in a session so we can redirect after login
+          session[:destination_url] = destination_url
+          redirect_to path('/session/sso')
+        else
+          # save original URL in a cookie (javascript redirects after login in this case)
+          cookies[:destination_url] = destination_url
+          redirect_to :login
+        end
+      end
     end
 
     def block_if_readonly_mode
-      return if request.fullpath.start_with?("/admin/backups")
-      raise Discourse::ReadOnly.new if !request.get? && Discourse.readonly_mode?
+      return if request.fullpath.start_with?(path "/admin/backups")
+      raise Discourse::ReadOnly.new if !(request.get? || request.head?) && Discourse.readonly_mode?
     end
 
     def build_not_found_page(status=404, layout=false)
       category_topic_ids = Category.pluck(:topic_id).compact
-      @top_viewed = Topic.where.not(id: category_topic_ids).top_viewed(10)
+      @container_class = "wrap not-found-container"
+      @top_viewed = TopicQuery.new(nil, {except_topic_ids: category_topic_ids}).list_top_for("monthly").topics.first(10)
       @recent = Topic.where.not(id: category_topic_ids).recent(10)
       @slug =  params[:slug].class == String ? params[:slug] : ''
       @slug =  (params[:id].class == String ? params[:id] : '') if @slug.blank?
-      @slug.gsub!('-',' ')
+      @slug.tr!('-',' ')
       render_to_string status: status, layout: layout, formats: [:html], template: '/exceptions/not_found'
     end
 
@@ -375,10 +512,6 @@ class ApplicationController < ActionController::Base
         post_serializer.post_actions = counts
       end
       render_json_dump(post_serializer)
-    end
-
-    def api_key_valid?
-      request["api_key"] && ApiKey.where(key: request["api_key"]).exists?
     end
 
     # returns an array of integers given a param key

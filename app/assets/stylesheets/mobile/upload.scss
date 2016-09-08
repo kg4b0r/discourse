@@ -3,11 +3,11 @@
     width: 520px;
   }
   input[type="file"] {
-    font-size: 14px;
+    font-size: 1em;
     line-height: 18px;
   }
   .description {
-    color: scale-color($primary, $lightness: 50%);
+    color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
   }
 }
 

@@ -19,17 +19,17 @@ module UserNotificationsHelper
 
   def logo_url
     logo_url = SiteSetting.digest_logo_url
-    logo_url = SiteSetting.logo_url if logo_url.blank?
+    logo_url = SiteSetting.logo_url if logo_url.blank? || logo_url =~ /\.svg$/i
 
-    return nil if logo_url.blank?
+    return nil if logo_url.blank? || logo_url =~ /\.svg$/i
     if logo_url !~ /http(s)?\:\/\//
       logo_url = "#{Discourse.base_url}#{logo_url}"
     end
     logo_url
   end
 
-  def html_site_link
-    "<a href='#{Discourse.base_url}'>#{@site_name}</a>"
+  def html_site_link(color)
+    "<a href='#{Discourse.base_url}' style='color: ##{color}'>#{@site_name}</a>"
   end
 
   def first_paragraph_from(html)
@@ -51,36 +51,35 @@ module UserNotificationsHelper
   def email_excerpt(html, posts_count)
     # only include 1st paragraph when more than 1 posts
     html = first_paragraph_from(html).to_s if posts_count > 1
-    raw format_for_email(html)
-  end
-
-  def format_for_email(html)
     PrettyText.format_for_email(html).html_safe
   end
 
-  def email_category(category, opts=nil)
-    opts = opts || {}
-
-    # If there is no category, bail
-    return "" if category.blank?
-
-    # By default hide uncategorized
-    return "" if category.uncategorized? && !opts[:show_uncategorized]
-
-    result = ""
-
-    category_url = "#{Discourse.base_url}#{category.url}"
-
-    if opts[:only_stripe]
-      result << "<a href='#{category_url}' style='background-color: ##{category.color}; font-size: 12px; padding: 2px 1px; font-weight: bold; margin: 0; width: 2px; white-space:nowrap;'>&nbsp;</a>"
-      result << "<a href='#{category_url}' style='font-size: 12px; font-weight: bold; margin-left: 3px;'>#{category.name}</a>"
-    else
-      if category.parent_category.present?
-        result << "<a href='#{category_url}' style='background-color: ##{category.parent_category.color}; font-size: 12px; padding: 4px 2px; font-weight: bold; margin: 0; width: 2px; white-space:nowrap;'>&nbsp;</a>"
-      end
-      result << "<a href='#{category_url}' style='background-color: ##{category.color}; color: ##{category.text_color}; font-size: 12px; padding: 4px 6px; font-weight: bold; margin: 0; white-space:nowrap;'>#{category.name}</a>"
-    end
-
-    result.html_safe
+  def normalize_name(name)
+    name.downcase.gsub(/[\s_-]/, '')
   end
+
+  def show_name_on_post(post)
+    SiteSetting.enable_names? &&
+      SiteSetting.display_name_on_posts? &&
+      post.user.name.present? &&
+      normalize_name(post.user.name) != normalize_name(post.user.username)
+  end
+
+  def format_for_email(post, use_excerpt)
+    html = use_excerpt ? post.excerpt : post.cooked
+    PrettyText.format_for_email(html, post).html_safe
+  end
+
+  def digest_custom_html(position_key)
+    digest_custom "user_notifications.digest.custom.html.#{position_key}"
+  end
+
+  def digest_custom_text(position_key)
+    digest_custom "user_notifications.digest.custom.text.#{position_key}"
+  end
+
+  def digest_custom(i18n_key)
+    PrettyText.format_for_email(I18n.t(i18n_key)).html_safe
+  end
+
 end

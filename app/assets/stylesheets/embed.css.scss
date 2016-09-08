@@ -3,18 +3,22 @@
 
 @import "./common/foundation/variables";
 @import "./common/foundation/colors";
-@import "./common/base/onebox";
+@import "./common/foundation/mixins";
 
 article.post {
   border-bottom: 1px solid #ddd;
+
+  img.avatar {
+    border-radius: 50%;
+  }
 
   &.deleted {
     background-color: #ffe5e5;
   }
 
   .quote .title {
-    border-left: 5px solid darken(scale-color-diff(), 10%);
-    background-color: scale-color-diff();
+    border-left: 5px solid darken(dark-light-diff($primary, $secondary, 97%, -45%), 10%);
+    background-color: dark-light-diff($primary, $secondary, 97%, -45%);
     padding: 10px 10px 0 12px;
     .avatar { margin-right: 7px; }
   }
@@ -26,9 +30,8 @@ article.post {
   blockquote {
     padding: 10px 8px 10px 13px;
     margin: 0 0 10px 0;
-    background-color: scale-color-diff();
-    border-left: 5px solid darken(scale-color-diff(), 10%);
-    overflow: hidden;
+    background-color: dark-light-diff($primary, $secondary, 97%, -45%);
+    border-left: 5px solid darken(dark-light-diff($primary, $secondary, 97%, -45%), 10%);
     p {
       margin: 0 0 10px 0;
     }
@@ -40,7 +43,7 @@ article.post {
   .post-date {
     float: right;
     color: #aaa;
-    font-size: 12px;
+    font-size: 0.857em;
     margin: 10px 4px 0 0;
   }
 
@@ -50,32 +53,13 @@ article.post {
 
     img {
       max-width: 45px;
+      border-radius: 50%;
     }
   }
 
-  h3.username {
-    font-size: 13px;
-    margin: 0 0 10px 0;
-
-    a {
-      color: #5c5c5c
-    }
-    a.staff {
-      background-color: #ffffc2;
-    }
-
-    a.new-user {
-      color: scale-color($primary, $lightness: 70%);
-    }
-
-    span.title {
-      font-weight: normal;
-      color: #999;
-    }
-  }
 
   .cooked {
-    padding: 10px 0 20px 0;
+    padding: 10px 0;
     margin-left: 65px;
     word-wrap: break-word;
     word-break: break-word;
@@ -92,19 +76,34 @@ article.post {
   }
 }
 
+.username {
+  font-size: 0.929em;
+  margin: 0 0 10px 0;
+
+  a {
+    color: #5c5c5c
+  }
+  a.staff {
+    background-color: #ffffc2;
+  }
+
+  a.new-user {
+    color: dark-light-choose(scale-color($primary, $lightness: 70%), scale-color($secondary, $lightness: 30%));
+  }
+
+  span.title {
+    font-weight: normal;
+    color: #999;
+  }
+}
+
 img.emoji {
   width: 20px;
   height: 20px;
 }
 
-.post-replies {
-  background-color: #eee;
-  padding: 5px;
-  display: inline-block;
-}
-
 .in-reply-to {
-  font-size: 13px;
+  font-size: 0.929em;
   text-align: center;
   margin: 10px 20px 6px 0;
   display: inline-block;
@@ -113,26 +112,29 @@ img.emoji {
 }
 
 .replies {
-  font-size: 15px;
+  font-size: 1.071em;
   color: #999;
 }
 
-header.embedded {
-  padding: 10px 10px 20px 10px;
-  font-size: 18px;
-  border-bottom: 1px solid #ddd;
+header.discourse {
+  padding-left: 10px;
+  padding-bottom: 8px;
+  font-size: 1.286em;
+  border-bottom: 3px solid #ddd;
+
+  .button {
+    float:right;
+  }
 }
 
 footer {
-  font-size: 18px;
-
-  .logo {
-    margin-right: 10px;
-    margin-top: 10px;
-  }
-
-  a[href].button {
-    margin: 10px 0 0 10px;
+  font-size: 1.286em;
+  margin-top: 0.5em;
+  .button {
+    color: white;
+    padding: 6px 8px;
+    background-color: #0088cc;
+    display: inline-block;
   }
 }
 
@@ -141,8 +143,20 @@ footer {
   max-height: 30px;
 }
 
-a[href].button {
-  background-color: #eee;
-  padding: 5px;
-  display: inline-block;
+// load onebox CSS at the end
+@import "./common/base/onebox";
+
+// we apparently use bottom margins on paras in the embed CSS, leading to weirdness
+// which we will now clean up
+aside.onebox {
+  margin-bottom: 20px;
+  p {
+    margin-bottom: 0 !important;
+  }
+}
+
+// images large enough for the lightbox wrapper don't have bottom margins
+// either, unless we add one now
+div.lightbox-wrapper {
+  margin-bottom: 20px;
 }

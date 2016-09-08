@@ -1,26 +1,23 @@
-require 'spec_helper'
+require 'rails_helper'
 require_dependency 'discourse_event'
 
 describe DiscourseEvent do
 
   describe "#events" do
     it "defaults to {}" do
-      DiscourseEvent.instance_variable_set(:@events, nil)
-      DiscourseEvent.events.should == {}
+      begin
+        original_events = DiscourseEvent.events
+        DiscourseEvent.instance_variable_set(:@events, nil)
+        expect(DiscourseEvent.events).to eq({})
+      ensure
+        DiscourseEvent.instance_variable_set(:@events, original_events)
+      end
     end
 
     describe "key value" do
       it "defaults to an empty set" do
-        DiscourseEvent.events["event42"].should == Set.new
+        expect(DiscourseEvent.events["event42"]).to eq(Set.new)
       end
-    end
-  end
-
-  describe ".clear" do
-    it "clears out events" do
-      DiscourseEvent.events["event42"] << "test event"
-      DiscourseEvent.clear
-      DiscourseEvent.events.should be_empty
     end
   end
 
@@ -55,7 +52,7 @@ describe DiscourseEvent do
 
       it "changes the name" do
         DiscourseEvent.trigger(:acid_face, harvey)
-        harvey.name.should == 'Two Face'
+        expect(harvey.name).to eq('Two Face')
       end
 
     end
@@ -71,8 +68,8 @@ describe DiscourseEvent do
       end
 
       it 'triggers both events' do
-        harvey.job.should == 'Supervillian'
-        harvey.name.should == 'Two Face'
+        expect(harvey.job).to eq('Supervillian')
+        expect(harvey.name).to eq('Two Face')
       end
 
     end

@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'rails_helper'
 require_dependency 'discourse_plugin'
 
 describe DiscoursePlugin do
@@ -16,7 +16,7 @@ describe DiscoursePlugin do
 
   describe ".mixins" do
     it "finds its mixins" do
-      TestPlugin.mixins.should == [TestPlugin::TestMixin]
+      expect(TestPlugin.mixins).to eq([TestPlugin::TestMixin])
     end
   end
 
@@ -38,7 +38,11 @@ describe DiscoursePlugin do
   context 'registering for callbacks' do
     before do
       plugin.stubs(:hello)
-      plugin.listen_for(:hello)
+      @proc = plugin.listen_for(:hello).first
+    end
+
+    after do
+      DiscourseEvent.off(:hello, &@proc)
     end
 
     it "calls the method when it is triggered" do

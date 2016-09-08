@@ -1,31 +1,20 @@
-var compiled;
+import { on, default as computed } from 'ember-addons/ember-computed-decorators';
 
-function templateFunction() {
-  compiled = compiled || Handlebars.compile(
-    "<div class='autocomplete'>" +
-      "<ul>" +
-      "{{#each options}}" +
-        "<li>" +
-            "<a href=''>{{this.name}}</a>" +
-        "</li>" +
-      "{{/each}}" +
-      "</ul>" +
-      "</div>"
-  );
-  return compiled;
-}
+export default Ember.Component.extend({
+  @computed('placeholderKey')
+  placeholder(placeholderKey) {
+    return placeholderKey ? I18n.t(placeholderKey) : '';
+  },
 
-export default Em.Component.extend({
-  placeholder: function(){
-    return I18n.t(this.get("placeholderKey"));
-  }.property("placeholderKey"),
-
-  didInsertElement: function() {
+  @on('didInsertElement')
+  _initializeAutocomplete() {
     var self = this;
     var selectedGroups;
 
+    var template = this.container.lookup('template:group-selector-autocomplete.raw');
     self.$('input').autocomplete({
       allowAny: false,
+      items: this.get('groupNames'),
       onChangeItems: function(items){
         selectedGroups = items;
         self.set("groupNames", items.join(","));
@@ -41,11 +30,11 @@ export default Em.Component.extend({
           }
 
           return groups.filter(function(group){
-            return !selectedGroups.any(function(s){return s === group.name});
+            return !selectedGroups.any(function(s){return s === group.name;});
           });
         });
       },
-      template: templateFunction()
+      template: template
     });
   }
 });

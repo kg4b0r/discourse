@@ -5,6 +5,11 @@ module Validators; end
 class Validators::UploadValidator < ActiveModel::Validator
 
   def validate(upload)
+    # check the attachment blacklist
+    if upload.is_attachment_for_group_message && SiteSetting.allow_all_attachments_for_group_messages
+      return upload.original_filename =~ SiteSetting.attachment_filename_blacklist_regex
+    end
+
     extension = File.extname(upload.original_filename)[1..-1] || ""
 
     if is_authorized?(upload, extension)
@@ -78,9 +83,10 @@ class Validators::UploadValidator < ActiveModel::Validator
   end
 
   def maximum_file_size(upload, type)
-    max_size_kb = SiteSetting.send("max_#{type}_size_kb").kilobytes
+    max_size_kb = SiteSetting.send("max_#{type}_size_kb")
+    max_size_bytes = max_size_kb.kilobytes
 
-    if upload.filesize > max_size_kb
+    if upload.filesize > max_size_bytes
       message = I18n.t("upload.#{type}s.too_large", max_size_kb: max_size_kb)
       upload.errors.add(:filesize, message)
     end

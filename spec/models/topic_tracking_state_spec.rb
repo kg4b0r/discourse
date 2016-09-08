@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'rails_helper'
 
 describe TopicTrackingState do
 
@@ -15,41 +15,95 @@ describe TopicTrackingState do
     TopicTrackingState.publish_unread(post)
   end
 
-  it "correctly gets the tracking state" do
-    report = TopicTrackingState.report([user.id])
-    report.length.should == 0
+  it "correctly handles muted categories" do
 
-    new_post = post
+    user = Fabricate(:user)
+    post
+
+    report = TopicTrackingState.report(user.id)
+    expect(report.length).to eq(1)
+
+    CategoryUser.create!(user_id: user.id,
+                         notification_level: CategoryUser.notification_levels[:muted],
+                         category_id: post.topic.category_id
+                         )
+
+    create_post(topic_id: post.topic_id)
+
+    report = TopicTrackingState.report(user.id)
+    expect(report.length).to eq(0)
+
+    TopicUser.create!(user_id: user.id, topic_id: post.topic_id, last_read_post_number: 1, notification_level: 3)
+
+    report = TopicTrackingState.report(user.id)
+    expect(report.length).to eq(1)
+  end
+
+
+  it "correctly handles capping" do
+    user = Fabricate(:user)
+
+    post1 = create_post
+    Fabricate(:post, topic: post1.topic)
+
+    post2 = create_post
+    Fabricate(:post, topic: post2.topic)
+
+    post3 = create_post
+    Fabricate(:post, topic: post3.topic)
+
+    tracking = {
+      notification_level: TopicUser.notification_levels[:tracking],
+      last_read_post_number: 1,
+      highest_seen_post_number: 1
+    }
+
+    TopicUser.change(user.id, post1.topic_id, tracking)
+    TopicUser.change(user.id, post2.topic_id, tracking)
+    TopicUser.change(user.id, post3.topic_id, tracking)
+
+    report = TopicTrackingState.report(user.id)
+    expect(report.length).to eq(3)
+
+  end
+
+  it "correctly gets the tracking state" do
+    report = TopicTrackingState.report(user.id)
+    expect(report.length).to eq(0)
+
     post.topic.notifier.watch_topic!(post.topic.user_id)
 
-    report = TopicTrackingState.report([user.id])
+    report = TopicTrackingState.report(user.id)
 
-    report.length.should == 1
+    expect(report.length).to eq(1)
     row = report[0]
 
-    row.topic_id.should == post.topic_id
-    row.highest_post_number.should == 1
-    row.last_read_post_number.should == nil
-    row.user_id.should == user.id
+    expect(row.topic_id).to eq(post.topic_id)
+    expect(row.highest_post_number).to eq(1)
+    expect(row.last_read_post_number).to eq(nil)
+    expect(row.user_id).to eq(user.id)
 
     # lets not leak out random users
-    TopicTrackingState.report([post.user_id]).should be_empty
+    expect(TopicTrackingState.report(post.user_id)).to be_empty
 
     # lets not return anything if we scope on non-existing topic
-    TopicTrackingState.report([user.id], post.topic_id + 1).should be_empty
+    expect(TopicTrackingState.report(user.id, post.topic_id + 1)).to be_empty
 
     # when we reply the poster should have an unread row
     create_post(user: user, topic: post.topic)
 
-    report = TopicTrackingState.report([post.user_id, user.id])
-    report.length.should == 1
+    report = TopicTrackingState.report(user.id)
+    expect(report.length).to eq(0)
+
+    report = TopicTrackingState.report(post.user_id)
+    expect(report.length).to eq(1)
 
     row = report[0]
 
-    row.topic_id.should == post.topic_id
-    row.highest_post_number.should == 2
-    row.last_read_post_number.should == 1
-    row.user_id.should == post.user_id
+    expect(row.topic_id).to eq(post.topic_id)
+    expect(row.highest_post_number).to eq(2)
+    expect(row.last_read_post_number).to eq(1)
+    expect(row.user_id).to eq(post.user_id)
 
     # when we have no permission to see a category, don't show its stats
     category = Fabricate(:category, read_restricted: true)
@@ -57,6 +111,7 @@ describe TopicTrackingState do
     post.topic.category_id = category.id
     post.topic.save
 
-    TopicTrackingState.report([post.user_id, user.id]).count.should == 0
+    expect(TopicTrackingState.report(post.user_id)).to be_empty
+    expect(TopicTrackingState.report(user.id)).to be_empty
   end
 end

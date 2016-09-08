@@ -32,11 +32,9 @@ unless Rails.env.test?
     company_name: "company_short_name"
   })
 
-  create_static_page_topic('guidelines_topic_id', 'guidelines_topic.title', "guidelines_topic.body",
-                           (SiteText.text_for(:faq) rescue nil), staff, "guidelines")
+  create_static_page_topic('guidelines_topic_id', 'guidelines_topic.title', "guidelines_topic.body", nil, staff, "guidelines")
 
-  create_static_page_topic('privacy_topic_id', 'privacy_topic.title', "privacy_topic.body",
-                           (SiteText.text_for(:privacy_policy) rescue nil), staff, "privacy policy")
+  create_static_page_topic('privacy_topic_id', 'privacy_topic.title', "privacy_topic.body", nil, staff, "privacy policy")
 end
 
 if seed_welcome_topics
@@ -54,6 +52,15 @@ if seed_welcome_topics
     post.topic.update_pinned(true)
   end
 
-  welcome = File.read(Rails.root + 'docs/ADMIN-QUICK-START-GUIDE.md')
-  PostCreator.create(Discourse.system_user, raw: welcome, title: "READ ME FIRST: Admin Quick Start Guide", skip_validations: true, category: staff ? staff.name : nil)
+  filename = DiscoursePluginRegistry.seed_data["admin_quick_start_filename"]
+  if filename.nil? || !File.exists?(filename)
+    filename = Rails.root + 'docs/ADMIN-QUICK-START-GUIDE.md'
+  end
+
+  welcome = File.read(filename)
+  PostCreator.create( Discourse.system_user,
+                      raw: welcome,
+                      title: DiscoursePluginRegistry.seed_data["admin_quick_start_title"] || "READ ME FIRST: Admin Quick Start Guide",
+                      skip_validations: true,
+                      category: staff ? staff.name : nil)
 end

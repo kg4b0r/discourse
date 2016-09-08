@@ -1,3 +1,5 @@
+import FlaggedPost from 'admin/models/flagged-post';
+
 export default Ember.ArrayController.extend({
   query: null,
 
@@ -5,7 +7,7 @@ export default Ember.ArrayController.extend({
   adminActiveFlagsView: Em.computed.equal("query", "active"),
 
   actions: {
-    disagreeFlags: function (flaggedPost) {
+    disagreeFlags(flaggedPost) {
       var self = this;
       flaggedPost.disagreeFlags().then(function () {
         self.removeObject(flaggedPost);
@@ -14,7 +16,7 @@ export default Ember.ArrayController.extend({
       });
     },
 
-    deferFlags: function (flaggedPost) {
+    deferFlags(flaggedPost) {
       var self = this;
       flaggedPost.deferFlags().then(function () {
         self.removeObject(flaggedPost);
@@ -23,19 +25,19 @@ export default Ember.ArrayController.extend({
       });
     },
 
-    doneTopicFlags: function(item) {
+    doneTopicFlags(item) {
       this.send("disagreeFlags", item);
     },
-  },
 
-  loadMore: function(){
-    var flags = this.get("model");
-    return Discourse.FlaggedPost.findAll(this.get("query"),flags.length+1).then(function(data){
-      if(data.length===0){
-        flags.set("allLoaded",true);
-      }
-      flags.addObjects(data);
-    });
+    loadMore(){
+      const flags = this.get('model');
+      return FlaggedPost.findAll(this.get('query'), flags.length+1).then(data => {
+        if (data.length===0) {
+          flags.set("allLoaded",true);
+        }
+        flags.addObjects(data);
+      });
+    }
   }
 
 });

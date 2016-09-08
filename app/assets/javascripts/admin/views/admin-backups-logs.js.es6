@@ -1,24 +1,26 @@
+import debounce from 'discourse/lib/debounce';
 import { renderSpinner } from 'discourse/helpers/loading-spinner';
+import { escapeExpression } from 'discourse/lib/utilities';
 
-export default Discourse.View.extend({
+export default Ember.View.extend({
   classNames: ["admin-backups-logs"],
 
   _initialize: function() { this._reset(); }.on("init"),
 
-  _reset: function() {
+  _reset() {
     this.setProperties({ formattedLogs: "", index: 0 });
   },
 
-  _updateFormattedLogs: function() {
-    var logs = this.get("controller.model");
+  _updateFormattedLogs: debounce(function() {
+    const logs = this.get("controller.model");
     if (logs.length === 0) {
       this._reset(); // reset the cached logs whenever the model is reset
     } else {
       // do the log formatting only once for HELLish performance
-      var formattedLogs = this.get("formattedLogs");
-      for (var i = this.get("index"), length = logs.length; i < length; i++) {
-        var date = moment(logs[i].get("timestamp")).format("YYYY-MM-DD HH:mm:ss"),
-            message = Handlebars.Utils.escapeExpression(logs[i].get("message"));
+      let formattedLogs = this.get("formattedLogs");
+      for (let i = this.get("index"), length = logs.length; i < length; i++) {
+        const date = logs[i].get("timestamp"),
+              message = escapeExpression(logs[i].get("message"));
         formattedLogs += "[" + date + "] " + message + "\n";
       }
       // update the formatted logs & cache index
@@ -26,10 +28,10 @@ export default Discourse.View.extend({
       // force rerender
       this.rerender();
     }
-  }.observes("controller.model.@each"),
+  }, 150).observes("controller.model.[]"),
 
-  render: function(buffer) {
-    var formattedLogs = this.get("formattedLogs");
+  render(buffer) {
+    const formattedLogs = this.get("formattedLogs");
     if (formattedLogs && formattedLogs.length > 0) {
       buffer.push("<pre>");
       buffer.push(formattedLogs);
@@ -38,13 +40,13 @@ export default Discourse.View.extend({
       buffer.push("<p>" + I18n.t("admin.backups.logs.none") + "</p>");
     }
     // add a loading indicator
-    if (this.get("controller.status.isOperationRunning")) {
+    if (this.get("controller.status.model.isOperationRunning")) {
       buffer.push(renderSpinner('small'));
     }
   },
 
   _forceScrollToBottom: function() {
-    var $div = this.$()[0];
+    const $div = this.$()[0];
     $div.scrollTop = $div.scrollHeight;
   }.on("didInsertElement")
 

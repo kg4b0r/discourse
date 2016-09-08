@@ -1,65 +1,69 @@
+import { displayErrorForUpload, validateUploadedFiles } from 'discourse/lib/utilities';
+
 export default Em.Mixin.create({
   uploading: false,
   uploadProgress: 0,
 
-  uploadDone: function() {
+  uploadDone() {
     Em.warn("You should implement `uploadDone`");
   },
 
-  deleteDone: function() {
-    Em.warn("You should implement `deleteDone`");
-  },
+  _initialize: function() {
+    const $upload = this.$(),
+          csrf = Discourse.Session.currentProp("csrfToken"),
+          uploadUrl = Discourse.getURL(this.getWithDefault("uploadUrl", "/uploads")),
+          reset = () => this.setProperties({ uploading: false, uploadProgress: 0});
 
-  _initializeUploader: function() {
-    // NOTE: we can't cache this as fileupload replaces the input after upload
-    // cf. https://github.com/blueimp/jQuery-File-Upload/wiki/Frequently-Asked-Questions#why-is-the-file-input-field-cloned-and-replaced-after-each-selection
-    var $upload = this.$('input[type=file]'),
-       self = this;
+    this.messageBus.subscribe("/uploads/" + this.get("type"), upload => {
+      if (upload && upload.url) {
+        this.uploadDone(upload);
+      } else {
+        displayErrorForUpload(upload);
+      }
+      reset();
+    });
 
     $upload.fileupload({
-      url: this.get('uploadUrl'),
+      url: uploadUrl + ".json?client_id=" + this.messageBus.clientId + "&authenticity_token=" + encodeURIComponent(csrf),
       dataType: "json",
-      fileInput: $upload,
-      formData: { image_type: this.get('type') },
-      dropZone: this.$(),
-      pasteZone: this.$()
+      dropZone: $upload,
+      pasteZone: $upload
     });
 
-    $upload.on('fileuploadsubmit', function (e, data) {
-      var result = Discourse.Utilities.validateUploadedFiles(data.files, true);
-      self.setProperties({ uploadProgress: 0, uploading: result });
-      return result;
-    });
-
-    $upload.on("fileuploadprogressall", function(e, data) {
-      var progress = parseInt(data.loaded / data.total * 100, 10);
-      self.set("uploadProgress", progress);
-    });
-
-    $upload.on("fileuploaddone", function(e, data) {
-      if(data.result.url) {
-        self.uploadDone(data);
+    $upload.on("fileuploaddrop", (e, data) => {
+      if (data.files.length > 10) {
+        bootbox.alert(I18n.t("post.errors.too_many_dragged_and_dropped_files"));
+        return false;
       } else {
-        bootbox.alert(I18n.t('post.errors.upload'));
+        return true;
       }
     });
 
-    $upload.on("fileuploadfail", function(e, data) {
-      Discourse.Utilities.displayErrorForUpload(data);
+    $upload.on("fileuploadsubmit", (e, data) => {
+      const isValid = validateUploadedFiles(data.files, true);
+      let form = { type: this.get("type") };
+      if (this.get("data")) { form = $.extend(form, this.get("data")); }
+      data.formData = form;
+      this.setProperties({ uploadProgress: 0, uploading: isValid });
+      return isValid;
     });
 
-    $upload.on("fileuploadalways", function() {
-      self.setProperties({ uploading: false, uploadProgress: 0});
+    $upload.on("fileuploadprogressall", (e, data) => {
+      const progress = parseInt(data.loaded / data.total * 100, 10);
+      this.set("uploadProgress", progress);
     });
-  }.on('didInsertElement'),
 
-  _destroyUploader: function() {
-    this.$('input[type=file]').fileupload('destroy');
-  }.on('willDestroyElement'),
+    $upload.on("fileuploadfail", (e, data) => {
+      displayErrorForUpload(data);
+      reset();
+    });
+  }.on("didInsertElement"),
 
-  actions: {
-    selectFile: function() {
-      this.$('input[type=file]').click();
-    }
-  }
+  _destroy: function() {
+    this.messageBus.unsubscribe("/uploads/" + this.get("type"));
+    const $upload = this.$();
+    try { $upload.fileupload("destroy"); }
+    catch (e) { /* wasn't initialized yet */ }
+    $upload.off();
+  }.on("willDestroyElement")
 });

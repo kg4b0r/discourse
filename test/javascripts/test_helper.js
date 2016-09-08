@@ -1,46 +1,33 @@
-/*jshint maxlen:250 */
 /*global document, sinon, QUnit, Logster */
 
 //= require env
-
-//= require ../../app/assets/javascripts/preload_store
-
-// probe framework first
-//= require ../../app/assets/javascripts/discourse/lib/probes
-
-// Externals we need to load first
-//= require development/jquery-2.1.1
+//= require probes
+//= require jquery.debug
 //= require jquery.ui.widget
 //= require handlebars
-//= require development/ember
+//= require ember.debug
+//= require ember-template-compiler
 //= require message-bus
 //= require ember-qunit
 //= require fake_xml_http_request
 //= require route-recognizer
 //= require pretender
+//= require loader
+//= require preload-store
 
-//= require ../../app/assets/javascripts/locales/i18n
-//= require ../../app/assets/javascripts/discourse/helpers/i18n_helpers
-//= require ../../app/assets/javascripts/locales/en
-
-// Pagedown customizations
-//= require ../../app/assets/javascripts/pagedown_custom.js
-
-//= require ../../public/javascripts/highlight.pack.js
-
-//= require vendor
-
-//= require htmlparser.js
+//= require locales/i18n
+//= require locales/en
 
 // Stuff we need to load first
+//= require vendor
+//= require ember-shim
+//= require pretty-text-bundle
 //= require main_include
+//= require htmlparser.js
 //= require admin
-//= require_tree ../../app/assets/javascripts/defer
-
 
 //= require sinon-1.7.1
 //= require sinon-qunit-1.0.0
-//= require jshint
 
 //= require helpers/qunit-helpers
 //= require helpers/assertions
@@ -49,21 +36,16 @@
 //= require_tree ./fixtures
 //= require_tree ./lib
 //= require_tree .
+//= require plugin_tests
 //= require_self
+//
+//= require jquery.magnific-popup-min.js
 
-// sinon settings
-sinon.config = {
-  injectIntoThis: true,
-  injectInto: null,
-  properties: ["spy", "stub", "mock", "clock", "sandbox"],
-  useFakeTimers: false,
-  useFakeServer: false
-};
-
-window.assetPath = function() { return null; };
+window.TestPreloadStore = require('preload-store').default;
+window.inTestEnv = true;
 
 // Stop the message bus so we don't get ajax calls
-Discourse.MessageBus.stop();
+window.MessageBus.stop();
 
 // Trick JSHint into allow document.write
 var d = document;
@@ -73,9 +55,7 @@ d.write('<style>#ember-testing-container { position: absolute; background: white
 Discourse.rootElement = '#ember-testing';
 Discourse.setupForTesting();
 Discourse.injectTestHelpers();
-Discourse.runInitializers();
 Discourse.start();
-Discourse.Route.mapRoutes();
 
 // disable logster error reporting
 if (window.Logster) {
@@ -86,24 +66,49 @@ if (window.Logster) {
 
 var origDebounce = Ember.run.debounce,
     createPretendServer = require('helpers/create-pretender', null, null, false).default,
-    fixtures = require('fixtures/site_fixtures', null, null, false).default,
+    fixtures = require('fixtures/site-fixtures', null, null, false).default,
+    flushMap = require('discourse/models/store', null, null, false).flushMap,
+    ScrollingDOMMethods = require('discourse/mixins/scrolling', null, null, false).ScrollingDOMMethods,
+    _DiscourseURL = require('discourse/lib/url', null, null, false).default,
     server;
+
+function dup(obj) {
+  return jQuery.extend(true, {}, obj);
+}
+
+function resetSite() {
+  var createStore = require('helpers/create-store').default;
+  var siteAttrs = dup(fixtures['site.json'].site);
+  siteAttrs.store = createStore();
+  Discourse.Site.resetCurrent(Discourse.Site.create(siteAttrs));
+}
 
 QUnit.testStart(function(ctx) {
   server = createPretendServer();
 
   // Allow our tests to change site settings and have them reset before the next test
-  Discourse.SiteSettings = jQuery.extend(true, {}, Discourse.SiteSettingsOriginal);
-  Discourse.BaseUri = "/";
-  Discourse.BaseUrl = "";
+  Discourse.SiteSettings = dup(Discourse.SiteSettingsOriginal);
+  Discourse.BaseUri = "";
+  Discourse.BaseUrl = "localhost";
+  Discourse.Session.resetCurrent();
   Discourse.User.resetCurrent();
-  Discourse.Site.resetCurrent(Discourse.Site.create(fixtures['site.json'].site));
-  PreloadStore.reset();
+  resetSite();
+
+  _DiscourseURL.redirectedTo = null;
+  _DiscourseURL.redirectTo = function(url) {
+    _DiscourseURL.redirectedTo = url;
+  };
+
+  var ps = require('preload-store').default;
+  ps.reset();
 
   window.sandbox = sinon.sandbox.create();
+  window.sandbox.stub(ScrollingDOMMethods, "screenNotFull");
+  window.sandbox.stub(ScrollingDOMMethods, "bindOnScroll");
+  window.sandbox.stub(ScrollingDOMMethods, "unbindOnScroll");
 
-  window.sandbox.stub(Discourse.ScrollingDOMMethods, "bindOnScroll");
-  window.sandbox.stub(Discourse.ScrollingDOMMethods, "unbindOnScroll");
+  // Unless we ever need to test this, let's leave it off.
+  $.fn.autocomplete = Ember.K;
 
   // Don't debounce in test unless we're testing debouncing
   if (ctx.module.indexOf('debounce') === -1) {
@@ -117,6 +122,7 @@ QUnit.testDone(function() {
 
   // Destroy any modals
   $('.modal-backdrop').remove();
+  flushMap();
 
   server.shutdown();
 });
@@ -128,11 +134,12 @@ var helpers = require("helpers/qunit-helpers");
 window.asyncTestDiscourse = helpers.asyncTestDiscourse;
 window.controllerFor = helpers.controllerFor;
 window.fixture = helpers.fixture;
-window.integration = helpers.integration;
 
-
-Ember.keys(requirejs.entries).forEach(function(entry) {
+Object.keys(requirejs.entries).forEach(function(entry) {
   if ((/\-test/).test(entry)) {
     require(entry, null, null, true);
   }
 });
+require('mdtest/mdtest', null, null, true);
+resetSite();
+

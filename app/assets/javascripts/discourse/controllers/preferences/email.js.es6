@@ -1,14 +1,6 @@
-import ObjectController from 'discourse/controllers/object';
+import { propertyEqual } from 'discourse/lib/computed';
 
-/**
-  This controller supports actions related to updating one's email address
-
-  @class PreferencesEmailController
-  @extends ObjectController
-  @namespace Discourse
-  @module Discourse
-**/
-export default ObjectController.extend({
+export default Ember.Controller.extend({
   taken: false,
   saving: false,
   error: false,
@@ -17,10 +9,10 @@ export default ObjectController.extend({
 
   newEmailEmpty: Em.computed.empty('newEmail'),
   saveDisabled: Em.computed.or('saving', 'newEmailEmpty', 'taken', 'unchanged'),
-  unchanged: Discourse.computed.propertyEqual('newEmailLower', 'email'),
+  unchanged: propertyEqual('newEmailLower', 'currentUser.email'),
 
   newEmailLower: function() {
-    return this.get('newEmail').toLowerCase();
+    return this.get('newEmail').toLowerCase().trim();
   }.property('newEmail'),
 
   saveButtonText: function() {
@@ -34,10 +26,10 @@ export default ObjectController.extend({
       this.set('saving', true);
       return this.get('content').changeEmail(this.get('newEmail')).then(function() {
         self.set('success', true);
-      }, function(data) {
+      }, function(e) {
         self.setProperties({ error: true, saving: false });
-        if (data.responseJSON && data.responseJSON.errors && data.responseJSON.errors[0]) {
-          self.set('errorMessage', data.responseJSON.errors[0]);
+        if (e.jqXHR.responseJSON && e.jqXHR.responseJSON.errors && e.jqXHR.responseJSON.errors[0]) {
+          self.set('errorMessage', e.jqXHR.responseJSON.errors[0]);
         } else {
           self.set('errorMessage', I18n.t('user.change_email.error'));
         }
@@ -46,5 +38,3 @@ export default ObjectController.extend({
   }
 
 });
-
-

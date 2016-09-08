@@ -1,5 +1,6 @@
 require_dependency 'discourse'
 require 'ipaddr'
+require 'url_helper'
 
 class TopicLinkClick < ActiveRecord::Base
   belongs_to :topic_link, counter_cache: :clicks
@@ -8,17 +9,56 @@ class TopicLinkClick < ActiveRecord::Base
   validates_presence_of :topic_link_id
   validates_presence_of :ip_address
 
+  WHITELISTED_REDIRECT_HOSTNAMES = Set.new(%W{www.youtube.com youtu.be})
+
   # Create a click from a URL and post_id
   def self.create_from(args={})
+    url = args[:url][0...TopicLink.max_url_length]
+    return nil if url.blank?
 
-    # If the URL is absolute, allow HTTPS and HTTP versions of it
-    if args[:url] =~ /^http/
-      http_url = args[:url].sub(/^https/, 'http')
-      https_url = args[:url].sub(/^http\:/, 'https:')
-      link = TopicLink.select([:id, :user_id]).where('url = ? OR url = ?', http_url, https_url)
-    else
-      link = TopicLink.select([:id, :user_id]).where(url: args[:url])
+    uri = URI.parse(url) rescue nil
+
+    urls = Set.new
+    urls << url
+    if url =~ /^http/
+      urls << url.sub(/^https/, 'http')
+      urls << url.sub(/^http:/, 'https:')
+      urls << UrlHelper.schemaless(url)
     end
+    urls << UrlHelper.absolute_without_cdn(url)
+    urls << uri.path if uri.try(:host) == Discourse.current_hostname
+
+    query = url.index('?')
+    unless query.nil?
+      endpos = url.index('#') || url.size
+      urls << url[0..query-1] + url[endpos..-1]
+    end
+
+    # add a cdn link
+    if uri
+      if Discourse.asset_host.present?
+        cdn_uri = URI.parse(Discourse.asset_host) rescue nil
+        if cdn_uri && cdn_uri.hostname == uri.hostname && uri.path.starts_with?(cdn_uri.path)
+          is_cdn_link = true
+          urls << uri.path[cdn_uri.path.length..-1]
+        end
+      end
+
+      if SiteSetting.s3_cdn_url.present?
+        cdn_uri = URI.parse(SiteSetting.s3_cdn_url) rescue nil
+        if cdn_uri && cdn_uri.hostname == uri.hostname && uri.path.starts_with?(cdn_uri.path)
+          is_cdn_link = true
+          path = uri.path[cdn_uri.path.length..-1]
+          urls << path
+          urls << "#{Discourse.store.absolute_base_url}#{path}"
+        end
+      end
+    end
+
+    link = TopicLink.select([:id, :user_id])
+
+    # test for all possible URLs
+    link = link.where(Array.new(urls.count, "url = ?").join(" OR "), *urls)
 
     # Find the forum topic link
     link = link.where(post_id: args[:post_id]) if args[:post_id].present?
@@ -27,23 +67,25 @@ class TopicLinkClick < ActiveRecord::Base
     link = link.where(topic_id: args[:topic_id]) if args[:topic_id].present?
     link = link.first
 
-    # If no link is found, return the url for relative links
+    # If no link is found...
     unless link.present?
-      return args[:url] if args[:url] =~ /^\//
+      # ... return the url for relative links or when using the same host
+      return url if url =~ /^\/[^\/]/ || uri.try(:host) == Discourse.current_hostname
 
-      begin
-        uri = URI.parse(args[:url])
-        return args[:url] if uri.host == URI.parse(Discourse.base_url).host
-      rescue
-      end
+      # If we have it somewhere else on the site, just allow the redirect.
+      # This is likely due to a onebox of another topic.
+      link = TopicLink.find_by(url: url)
+      return link.url if link.present?
 
-      # If we have it somewhere else on the site, just allow the redirect. This is
-      # likely due to a onebox of another topic.
-      link = TopicLink.find_by(url: args[:url])
-      return link.present? ? link.url : nil
+      return nil unless uri
+
+      # Only redirect to whitelisted hostnames
+      return url if WHITELISTED_REDIRECT_HOSTNAMES.include?(uri.hostname) || is_cdn_link
+
+      return nil
     end
 
-    return args[:url] if (args[:user_id] && (link.user_id == args[:user_id]))
+    return url if args[:user_id] && link.user_id == args[:user_id]
 
     # Rate limit the click counts to once in 24 hours
     rate_key = "link-clicks:#{link.id}:#{args[:user_id] || args[:ip]}"
@@ -52,7 +94,7 @@ class TopicLinkClick < ActiveRecord::Base
       create!(topic_link_id: link.id, user_id: args[:user_id], ip_address: args[:ip])
     end
 
-    args[:url]
+    url
   end
 
 end

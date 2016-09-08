@@ -1,9 +1,14 @@
 import AddCategoryClass from 'discourse/mixins/add-category-class';
+import AddArchetypeClass from 'discourse/mixins/add-archetype-class';
+import ClickTrack from 'discourse/lib/click-track';
+import Scrolling from 'discourse/mixins/scrolling';
+import { selectedText } from 'discourse/lib/utilities';
 
-export default Discourse.View.extend(AddCategoryClass, Discourse.Scrolling, {
+const TopicView = Ember.View.extend(AddCategoryClass, AddArchetypeClass, Scrolling, {
   templateName: 'topic',
-  topicBinding: 'controller.model',
-  userFiltersBinding: 'controller.userFilters',
+  topic: Ember.computed.alias('controller.model'),
+
+  userFilters: Ember.computed.alias('topic.userFilters'),
   classNameBindings: ['controller.multiSelect:multi-select',
                       'topic.archetype',
                       'topic.is_warning',
@@ -13,12 +18,14 @@ export default Discourse.View.extend(AddCategoryClass, Discourse.Scrolling, {
   menuVisible: true,
   SHORT_POST: 1200,
 
-  categoryId: Em.computed.alias('topic.category.id'),
+  categoryFullSlug: Em.computed.alias('topic.category.fullSlug'),
+  postStream: Em.computed.alias('topic.postStream'),
+  archetype: Em.computed.alias('topic.archetype'),
 
-  postStream: Em.computed.alias('controller.postStream'),
+  _lastShowTopic: null,
 
   _composeChanged: function() {
-    var composerController = Discourse.get('router.composerController');
+    const composerController = Discourse.get('router.composerController');
     composerController.clearState();
     composerController.set('topic', this.get('topic'));
   }.observes('composer'),
@@ -27,8 +34,9 @@ export default Discourse.View.extend(AddCategoryClass, Discourse.Scrolling, {
     // Ember is supposed to only call observers when values change but something
     // in our view set up is firing this observer with the same value. This check
     // prevents scrolled from being called twice.
-    var enteredAt = this.get('controller.enteredAt');
+    const enteredAt = this.get('controller.enteredAt');
     if (enteredAt && (this.get('lastEnteredAt') !== enteredAt)) {
+      this._lastShowTopic = null;
       this.scrolled();
       this.set('lastEnteredAt', enteredAt);
     }
@@ -37,22 +45,26 @@ export default Discourse.View.extend(AddCategoryClass, Discourse.Scrolling, {
   _inserted: function() {
     this.bindScrolling({name: 'topic-view'});
 
-    var self = this;
-    $(window).resize('resize.discourse-on-scroll', function() {
-      self.scrolled();
-    });
+    $(window).on('resize.discourse-on-scroll', () => this.scrolled());
 
     this.$().on('mouseup.discourse-redirect', '.cooked a, a.track-link', function(e) {
-      var selection = window.getSelection && window.getSelection();
       // bypass if we are selecting stuff
-      if (selection.type === "Range" || selection.rangeCount > 0) { return true; }
+      const selection = window.getSelection && window.getSelection();
+      if (selection.type === "Range" || selection.rangeCount > 0) {
+        if (selectedText() !== "") {
+          return true;
+        }
+      }
 
-      var $target = $(e.target);
+      const $target = $(e.target);
       if ($target.hasClass('mention') || $target.parents('.expanded-embed').length) { return false; }
-      return Discourse.ClickTrack.trackClick(e);
 
+      return ClickTrack.trackClick(e);
     });
 
+    this.appEvents.on('post:highlight', postNumber => {
+      Ember.run.scheduleOnce('afterRender', null, highlight, postNumber);
+    });
   }.on('didInsertElement'),
 
   // This view is being removed. Shut down operations
@@ -66,11 +78,12 @@ export default Discourse.View.extend(AddCategoryClass, Discourse.Scrolling, {
     this.resetExamineDockCache();
 
     // this happens after route exit, stuff could have trickled in
-    this.set('controller.controllers.header.showExtraInfo', false);
+    this.appEvents.trigger('header:hide-topic');
+    this.appEvents.off('post:highlight');
 
   }.on('willDestroyElement'),
 
-  gotFocus: function(){
+  gotFocus: function() {
     if (Discourse.get('hasFocus')){
       this.scrolled();
     }
@@ -83,20 +96,23 @@ export default Discourse.View.extend(AddCategoryClass, Discourse.Scrolling, {
   offset: 0,
   hasScrolled: Em.computed.gt("offset", 0),
 
-  /**
-    The user has scrolled the window, or it is finished rendering and ready for processing.
+  showTopicInHeader(topic, offset) {
+    if (this.get('docAt')) {
+      return offset >= this.get('docAt') || topic.get('postStream.firstPostNotLoaded');
+    } else {
+      return topic.get('postStream.firstPostNotLoaded');
+    }
+  },
 
-    @method scrolled
-  **/
-  scrolled: function(){
-
-    if(this.isDestroyed || this.isDestroying) {
+  // The user has scrolled the window, or it is finished rendering and ready for processing.
+  scrolled() {
+    if (this.isDestroyed || this.isDestroying || this._state !== 'inDOM') {
       return;
     }
 
-    var offset = window.pageYOffset || $('html').scrollTop();
+    const offset = window.pageYOffset || $('html').scrollTop();
     if (!this.get('docAt')) {
-      var title = $('#topic-title');
+      const title = $('#topic-title');
       if (title && title.length === 1) {
         this.set('docAt', title.offset().top);
       }
@@ -104,56 +120,34 @@ export default Discourse.View.extend(AddCategoryClass, Discourse.Scrolling, {
 
     this.set("offset", offset);
 
-    var headerController = this.get('controller.controllers.header'),
-        topic = this.get('controller.model');
-    if (this.get('docAt')) {
-      headerController.set('showExtraInfo', offset >= this.get('docAt') || topic.get('postStream.firstPostNotLoaded'));
-    } else {
-      headerController.set('showExtraInfo', topic.get('postStream.firstPostNotLoaded'));
+    const topic = this.get('topic');
+    const showTopic = this.showTopicInHeader(topic, offset);
+    if (showTopic !== this._lastShowTopic) {
+      this._lastShowTopic = showTopic;
+
+      if (showTopic) {
+        this.appEvents.trigger('header:show-topic', topic);
+      } else {
+        this.appEvents.trigger('header:hide-topic');
+      }
     }
 
     // Trigger a scrolled event
     this.appEvents.trigger('topic:scrolled', offset);
-  },
-
-  topicTrackingState: function() {
-    return Discourse.TopicTrackingState.current();
-  }.property(),
-
-  browseMoreMessage: function() {
-    var opts = { latestLink: "<a href=\"" + Discourse.getURL("/latest") + "\">" + I18n.t("topic.view_latest_topics") + "</a>" },
-        category = this.get('controller.content.category');
-
-    if(Em.get(category, 'id') === Discourse.Site.currentProp("uncategorized_category_id")) {
-      category = null;
-    }
-
-    if (category) {
-      opts.catLink = Discourse.HTML.categoryBadge(category, {showParent: true});
-    } else {
-      opts.catLink = "<a href=\"" + Discourse.getURL("/categories") + "\">" + I18n.t("topic.browse_all_categories") + "</a>";
-    }
-
-    var tracking = this.get('topicTrackingState'),
-        unreadTopics = tracking.countUnread(),
-        newTopics = tracking.countNew();
-
-    if (newTopics + unreadTopics > 0) {
-      var hasBoth = unreadTopics > 0 && newTopics > 0;
-
-      return I18n.messageFormat("topic.read_more_MF", {
-        "BOTH": hasBoth,
-        "UNREAD": unreadTopics,
-        "NEW": newTopics,
-        "CATEGORY": category ? true : false,
-        latestLink: opts.latestLink,
-        catLink: opts.catLink
-      });
-    }
-    else if (category) {
-      return I18n.t("topic.read_more_in_category", opts);
-    } else {
-      return I18n.t("topic.read_more", opts);
-    }
-  }.property('topicTrackingState.messageCount')
+  }
 });
+
+function highlight(postNumber) {
+  const $contents = $(`#post_${postNumber} .topic-body`),
+        origColor = $contents.data('orig-color') || $contents.css('backgroundColor');
+
+  $contents.data("orig-color", origColor)
+    .addClass('highlighted')
+    .stop()
+    .animate({ backgroundColor: origColor }, 2500, 'swing', function() {
+      $contents.removeClass('highlighted');
+      $contents.css({'background-color': ''});
+    });
+}
+
+export default TopicView;

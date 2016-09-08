@@ -5,7 +5,7 @@
 class PostDestroyer
 
   def self.destroy_old_hidden_posts
-    Post.where(deleted_at: nil)
+    Post.where(deleted_at: nil, hidden: true)
         .where("hidden_at < ?", 30.days.ago)
         .find_each do |post|
         PostDestroyer.new(Discourse.system_user, post).destroy
@@ -46,6 +46,11 @@ class PostDestroyer
     elsif @user.id == @post.user_id
       mark_for_deletion
     end
+    DiscourseEvent.trigger(:post_destroyed, @post, @opts, @user)
+
+    if @post.is_first_post? && @post.topic
+      DiscourseEvent.trigger(:topic_destroyed, @post.topic, @user)
+    end
   end
 
   def recover
@@ -54,13 +59,24 @@ class PostDestroyer
     elsif @user.staff? || @user.id == @post.user_id
       user_recovered
     end
-    @post.topic.recover! if @post.post_number == 1
-    @post.topic.update_statistics
+    topic = Topic.with_deleted.find @post.topic_id
+    topic.recover! if @post.is_first_post?
+    topic.update_statistics
+    recover_user_actions
+    DiscourseEvent.trigger(:post_recovered, @post, @opts, @user)
+    DiscourseEvent.trigger(:topic_recovered, topic, @user) if @post.is_first_post?
   end
 
   def staff_recovered
     @post.recover!
+
+    if author = @post.user
+      author.user_stat.post_count += 1
+      author.user_stat.save!
+    end
+
     @post.publish_change_to_clients! :recovered
+    TopicTrackingState.publish_recover(@post.topic) if @post.topic && @post.post_number == 1
   end
 
   # When a post is properly deleted. Well, it's still soft deleted, but it will no longer
@@ -71,7 +87,6 @@ class PostDestroyer
       if @post.topic
         make_previous_post_the_last_one
         clear_user_posted_flag
-        feature_users_in_the_topic
         Topic.reset_highest(@post.topic_id)
       end
       trash_public_post_actions
@@ -80,7 +95,7 @@ class PostDestroyer
       @post.update_flagged_posts_count
       remove_associated_replies
       remove_associated_notifications
-      if @post.topic && @post.post_number == 1
+      if @post.topic && @post.is_first_post?
         StaffActionLogger.new(@user).log_topic_deletion(@post.topic, @opts.slice(:context)) if @user.id != @post.user_id
         @post.topic.trash!(@user)
       elsif @user.id != @post.user_id
@@ -88,18 +103,26 @@ class PostDestroyer
       end
       update_associated_category_latest_topic
       update_user_counts
+      TopicUser.update_post_action_cache(post_id: @post.id)
     end
 
+    feature_users_in_the_topic if @post.topic
     @post.publish_change_to_clients! :deleted if @post.topic
+    TopicTrackingState.publish_delete(@post.topic) if @post.topic && @post.post_number == 1
   end
 
   # When a user 'deletes' their own post. We just change the text.
   def mark_for_deletion
-    Post.transaction do
+    I18n.with_locale(SiteSetting.default_locale) do
+
+      # don't call revise from within transaction, high risk of deadlock
       @post.revise(@user, { raw: I18n.t('js.post.deleted_by_author', count: SiteSetting.delete_removed_posts_after) }, force_new_version: true)
-      @post.update_column(:user_deleted, true)
-      @post.update_flagged_posts_count
-      @post.topic_links.each(&:destroy)
+
+      Post.transaction do
+        @post.update_column(:user_deleted, true)
+        @post.update_flagged_posts_count
+        @post.topic_links.each(&:destroy)
+      end
     end
   end
 
@@ -107,11 +130,12 @@ class PostDestroyer
     Post.transaction do
       @post.update_column(:user_deleted, false)
       @post.skip_unique_check = true
-      @post.revise(@user, { raw: @post.revisions.last.modifications["raw"][0] }, force_new_version: true)
       @post.update_flagged_posts_count
     end
-  end
 
+    # has internal transactions, if we nest then there are some very high risk deadlocks
+    @post.revise(@user, { raw: @post.revisions.last.modifications["raw"][0] }, force_new_version: true)
+  end
 
   private
 
@@ -119,9 +143,9 @@ class PostDestroyer
     last_post = Post.where("topic_id = ? and id <> ?", @post.topic_id, @post.id).order('created_at desc').limit(1).first
     if last_post.present?
       @post.topic.update_attributes(
-          last_posted_at: last_post.created_at,
-          last_post_user_id: last_post.user_id,
-          highest_post_number: last_post.post_number
+        last_posted_at: last_post.created_at,
+        last_post_user_id: last_post.user_id,
+        highest_post_number: last_post.post_number
       )
     end
   end
@@ -133,7 +157,7 @@ class PostDestroyer
   end
 
   def feature_users_in_the_topic
-    Jobs.enqueue(:feature_topic_users, topic_id: @post.topic_id, except_post_id: @post.id)
+    Jobs.enqueue(:feature_topic_users, topic_id: @post.topic_id)
   end
 
   def trash_public_post_actions
@@ -161,6 +185,11 @@ class PostDestroyer
     end
   end
 
+  def recover_user_actions
+    # TODO: Use a trash concept for `user_actions` to avoid churn and simplify this?
+    UserActionObserver.log_post(@post)
+  end
+
   def remove_associated_replies
     post_ids = PostReply.where(reply_id: @post.id).pluck(:post_id)
 
@@ -176,7 +205,7 @@ class PostDestroyer
 
   def update_associated_category_latest_topic
     return unless @post.topic && @post.topic.category
-    return unless @post.id == @post.topic.category.latest_post_id || (@post.post_number == 1 && @post.topic_id == @post.topic.category.latest_topic_id)
+    return unless @post.id == @post.topic.category.latest_post_id || (@post.is_first_post? && @post.topic_id == @post.topic.category.latest_topic_id)
 
     @post.topic.category.update_latest
   end
@@ -193,7 +222,7 @@ class PostDestroyer
     end
 
     author.user_stat.post_count -= 1
-    author.user_stat.topic_count -= 1 if @post.post_number == 1
+    author.user_stat.topic_count -= 1 if @post.is_first_post?
 
     # We don't count replies to your own topics
     if @topic && author.id != @topic.user_id

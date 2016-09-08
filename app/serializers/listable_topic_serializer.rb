@@ -20,9 +20,19 @@ class ListableTopicSerializer < BasicTopicSerializer
              :closed,
              :archived,
              :is_warning,
-             :notification_level
+             :notification_level,
+             :bookmarked,
+             :liked
 
   has_one :last_poster, serializer: BasicUserSerializer, embed: :objects
+
+  def liked
+    object.user_data && object.user_data.liked
+  end
+
+  def bookmarked
+    object.user_data && object.user_data.bookmarked
+  end
 
   def include_last_poster?
     object.include_last_poster
@@ -35,7 +45,7 @@ class ListableTopicSerializer < BasicTopicSerializer
   def seen
     return true if !scope || !scope.user
     return true if object.user_data && !object.user_data.last_read_post_number.nil?
-    return true if object.created_at < scope.user.treat_as_new_topic_start_date
+    return true if object.created_at < scope.user.user_option.treat_as_new_topic_start_date
     false
   end
 
@@ -54,6 +64,7 @@ class ListableTopicSerializer < BasicTopicSerializer
   def notification_level
     object.user_data.notification_level
   end
+
   def include_notification_level?
     object.user_data.present?
   end
@@ -65,6 +76,10 @@ class ListableTopicSerializer < BasicTopicSerializer
 
   def has_user_data
     !!object.user_data
+  end
+
+  def excerpt
+    object.excerpt
   end
 
   alias :include_last_read_post_number? :has_user_data

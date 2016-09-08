@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'rails_helper'
 require 'email'
 
 describe Email::Styles do
@@ -31,7 +31,7 @@ describe Email::Styles do
     end
 
     it "adds a width and height to images with an emoji path" do
-      frag = basic_fragment("<img src='/plugins/emoji/fish.png' class='emoji'>")
+      frag = basic_fragment("<img src='/images/emoji/fish.png' class='emoji'>")
       expect(frag.at("img")["width"]).to eq("20")
       expect(frag.at("img")["height"]).to eq("20")
     end
@@ -66,12 +66,12 @@ describe Email::Styles do
     end
 
     it "attaches a style to a tags" do
-      frag = html_fragment("<a href='#'>wat</a>")
+      frag = html_fragment("<a href>wat</a>")
       expect(frag.at('a')['style']).to be_present
     end
 
     it "attaches a style to a tags" do
-      frag = html_fragment("<a href='#'>wat</a>")
+      frag = html_fragment("<a href>wat</a>")
       expect(frag.at('a')['style']).to be_present
     end
 
@@ -100,51 +100,67 @@ describe Email::Styles do
   context "rewriting protocol relative URLs to the forum" do
     it "doesn't rewrite a url to another site" do
       frag = html_fragment('<a href="//youtube.com/discourse">hello</a>')
-      frag.at('a')['href'].should == "//youtube.com/discourse"
+      expect(frag.at('a')['href']).to eq("//youtube.com/discourse")
     end
 
     context "without https" do
       before do
-        SiteSetting.stubs(:use_https).returns(false)
+        SiteSetting.stubs(:force_https).returns(false)
       end
 
       it "rewrites the href to have http" do
         frag = html_fragment('<a href="//test.localhost/discourse">hello</a>')
-        frag.at('a')['href'].should == "http://test.localhost/discourse"
+        expect(frag.at('a')['href']).to eq("http://test.localhost/discourse")
       end
 
       it "rewrites the href for attachment files to have http" do
         frag = html_fragment('<a class="attachment" href="//try-discourse.global.ssl.fastly.net/uploads/default/368/40b610b0aa90cfcf.txt">attachment_file.txt</a>')
-        frag.at('a')['href'].should == "http://try-discourse.global.ssl.fastly.net/uploads/default/368/40b610b0aa90cfcf.txt"
+        expect(frag.at('a')['href']).to eq("http://try-discourse.global.ssl.fastly.net/uploads/default/368/40b610b0aa90cfcf.txt")
       end
 
       it "rewrites the src to have http" do
         frag = html_fragment('<img src="//test.localhost/blah.jpg">')
-        frag.at('img')['src'].should == "http://test.localhost/blah.jpg"
+        expect(frag.at('img')['src']).to eq("http://test.localhost/blah.jpg")
       end
     end
 
     context "with https" do
       before do
-        SiteSetting.stubs(:use_https).returns(true)
+        SiteSetting.stubs(:force_https).returns(true)
       end
 
       it "rewrites the forum URL to have https" do
         frag = html_fragment('<a href="//test.localhost/discourse">hello</a>')
-        frag.at('a')['href'].should == "https://test.localhost/discourse"
+        expect(frag.at('a')['href']).to eq("https://test.localhost/discourse")
       end
 
       it "rewrites the href for attachment files to have https" do
         frag = html_fragment('<a class="attachment" href="//try-discourse.global.ssl.fastly.net/uploads/default/368/40b610b0aa90cfcf.txt">attachment_file.txt</a>')
-        frag.at('a')['href'].should == "https://try-discourse.global.ssl.fastly.net/uploads/default/368/40b610b0aa90cfcf.txt"
+        expect(frag.at('a')['href']).to eq("https://try-discourse.global.ssl.fastly.net/uploads/default/368/40b610b0aa90cfcf.txt")
       end
 
       it "rewrites the src to have https" do
         frag = html_fragment('<img src="//test.localhost/blah.jpg">')
-        frag.at('img')['src'].should == "https://test.localhost/blah.jpg"
+        expect(frag.at('img')['src']).to eq("https://test.localhost/blah.jpg")
       end
     end
 
+  end
+
+  context "strip_avatars_and_emojis" do
+    it "works for lonesome emoji with no title" do
+      emoji = "<img src='/images/emoji/emoji_one/crying_cat_face.png'>"
+      style = Email::Styles.new(emoji)
+      style.strip_avatars_and_emojis
+      expect(style.to_html).to match_html(emoji)
+    end
+
+    it "works for lonesome emoji with title" do
+      emoji = "<img title='cry_cry' src='/images/emoji/emoji_one/crying_cat_face.png'>"
+      style = Email::Styles.new(emoji)
+      style.strip_avatars_and_emojis
+      expect(style.to_html).to match_html("cry_cry")
+    end
   end
 
 

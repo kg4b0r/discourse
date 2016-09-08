@@ -1,6 +1,10 @@
 #
 # Clean up a text
 #
+
+# Whe use ActiveSupport mb_chars from here to properly support non ascii downcase
+require 'active_support/core_ext/string/multibyte'
+
 class TextCleaner
 
   def self.title_options
@@ -27,9 +31,12 @@ class TextCleaner
     # Replace ????? with a single ?
     text.gsub!(/\?+/, '?') if opts[:deduplicate_question_marks]
     # Replace all-caps text with regular case letters
-    text.tr!('A-Z', 'a-z') if opts[:replace_all_upper_case] && (text =~ /[A-Z]+/) && (text == text.upcase)
+    text = text.mb_chars.downcase.to_s if opts[:replace_all_upper_case] && (text =~ /[A-Z]+/) && (text == text.upcase)
     # Capitalize first letter, but only when entire first word is lowercase
-    text.sub!(/\A([a-z]*)\b/) { |first| first.capitalize } if opts[:capitalize_first_letter]
+    first, rest = text.split(' ', 2)
+    if first && opts[:capitalize_first_letter] && first == first.mb_chars.downcase
+      text = "#{first.mb_chars.capitalize}#{rest ? ' ' + rest : ''}"
+    end
     # Remove unnecessary periods at the end
     text.sub!(/([^.])\.+(\s*)\z/, '\1\2') if opts[:remove_all_periods_from_the_end]
     # Remove extraneous space before the end punctuation
@@ -44,7 +51,7 @@ class TextCleaner
     text
   end
 
-  @@whitespaces_regexp = Regexp.new("(\u00A0|\u1680|\u180E|[\u2000-\u200B]|\u2028|\u2029|\u202F|\u205F|\u3000|\uFEFF)", "u").freeze
+  @@whitespaces_regexp = Regexp.new("(\u00A0|\u1680|\u180E|[\u2000-\u200A]|\u2028|\u2029|\u202F|\u205F|\u3000)", "u").freeze
 
   def self.normalize_whitespaces(text)
     text.gsub(@@whitespaces_regexp, ' ')

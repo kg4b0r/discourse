@@ -1,33 +1,56 @@
-import DiscourseController from 'discourse/controllers/controller';
+import Sharing from 'discourse/lib/sharing';
+import { longDateNoYear } from 'discourse/lib/formatter';
+import computed from 'ember-addons/ember-computed-decorators';
 
-export default DiscourseController.extend({
+export default Ember.Controller.extend({
   needs: ['topic'],
 
-  displayDate: function() {
-    return Discourse.Formatter.longDateNoYear(new Date(this.get('date')));
-  }.property('date'),
+  title: Ember.computed.alias('controllers.topic.model.title'),
+  canReplyAsNewTopic: Ember.computed.alias('controllers.topic.model.details.can_reply_as_new_topic'),
 
-  // Close the share controller
-  actions: {
-    close: function() {
-      this.setProperties({ link: '', postNumber: '' });
-      return false;
-    },
-
-    sharePopup: function(target, url) {
-      window.open(url, '', 'menubar=no,toolbar=no,resizable=yes,scrollbars=yes,width=600,height=' + Discourse.ShareLink.popupHeight(target));
-      return false;
+  @computed('type', 'postNumber')
+  shareTitle(type, postNumber) {
+    if (type === 'topic') { return I18n.t('share.topic'); }
+    if (postNumber) {
+      return I18n.t('share.post', { postNumber });
+    } else {
+      return I18n.t('share.topic');
     }
   },
 
-  shareLinks: function() {
-    return Discourse.SiteSettings.share_links.split('|').map(function(i) {
-      if( Discourse.ShareLink.supportedTargets.indexOf(i) >= 0 ) {
-        return Discourse.ShareLink.create({target: i, link: this.get('link'), topicTitle: this.get('controllers.topic.title')});
-      } else {
-        return null;
-      }
-    }, this).compact();
-  }.property('link')
+  @computed('date')
+  displayDate(date) {
+    return longDateNoYear(new Date(date));
+  },
 
+  // Close the share controller
+  actions: {
+    close() {
+      this.setProperties({ link: null, postNumber: null, postId: null });
+      return false;
+    },
+
+    replyAsNewTopic() {
+      const topicController = this.get("controllers.topic");
+      const postStream = topicController.get("model.postStream");
+      const postId = this.get("postId") || postStream.findPostIdForPostNumber(1);
+      const post = postStream.findLoadedPost(postId);
+      topicController.send("replyAsNewTopic", post);
+      this.send("close");
+    },
+
+    share(source) {
+      var url = source.generateUrl(this.get('link'), this.get('title'));
+      if (source.shouldOpenInPopup) {
+        window.open(url, '', 'menubar=no,toolbar=no,resizable=yes,scrollbars=yes,width=600,height=' + (source.popupHeight || 315));
+      } else {
+        window.open(url, '_blank');
+      }
+    }
+  },
+
+  @computed
+  sources() {
+    return Sharing.activeSources(this.siteSettings.share_links);
+  }
 });

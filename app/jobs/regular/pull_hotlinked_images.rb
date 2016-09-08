@@ -4,7 +4,8 @@ require_dependency 'file_helper'
 module Jobs
 
   class PullHotlinkedImages < Jobs::Base
-    include UrlHelper
+
+    sidekiq_options queue: 'low'
 
     def initialize
       # maximum size of the file in bytes
@@ -34,19 +35,19 @@ module Jobs
             # have we already downloaded that file?
             unless downloaded_urls.include?(src)
               begin
-                hotlinked = FileHelper.download(src, @max_size, "discourse-hotlinked")
+                hotlinked = FileHelper.download(src, @max_size, "discourse-hotlinked", true)
               rescue Discourse::InvalidParameters
               end
               if hotlinked
-                if hotlinked.size <= @max_size
+                if File.size(hotlinked.path) <= @max_size
                   filename = File.basename(URI.parse(src).path)
-                  upload = Upload.create_for(post.user_id, hotlinked, filename, hotlinked.size, { origin: src })
+                  upload = Upload.create_for(post.user_id, hotlinked, filename, File.size(hotlinked.path), { origin: src })
                   downloaded_urls[src] = upload.url
                 else
-                  Rails.logger.error("Failed to pull hotlinked image: #{src} - Image is bigger than #{@max_size}")
+                  Rails.logger.info("Failed to pull hotlinked image for post: #{post_id}: #{src} - Image is bigger than #{@max_size}")
                 end
               else
-                Rails.logger.error("There was an error while downloading '#{src}' locally.")
+                Rails.logger.error("There was an error while downloading '#{src}' locally for post: #{post_id}")
               end
             end
             # have we successfully downloaded that file?
@@ -62,13 +63,17 @@ module Jobs
               raw.gsub!(/\[!\[([^\]]*)\]\(#{escaped_src}\)\]/) { "[<img src='#{url}' alt='#{$1}'>]" }
               # Markdown inline - ![alt](http://...)
               raw.gsub!(/!\[([^\]]*)\]\(#{escaped_src}\)/) { "![#{$1}](#{url})" }
+              # Markdown inline - ![](http://... "image title")
+              raw.gsub!(/!\[\]\(#{escaped_src} "([^\]]*)"\)/) { "![](#{url})" }
+              # Markdown inline - ![alt](http://... "image title")
+              raw.gsub!(/!\[([^\]]*)\]\(#{escaped_src} "([^\]]*)"\)/) { "![](#{url})" }
               # Markdown reference - [x]: http://
-              raw.gsub!(/\[(\d+)\]: #{escaped_src}/) { "[#{$1}]: #{url}" }
+              raw.gsub!(/\[([^\]]+)\]:\s?#{escaped_src}/) { "[#{$1}]: #{url}" }
               # Direct link
-              raw.gsub!(src, "<img src='#{url}'>")
+              raw.gsub!(/^#{escaped_src}(\s?)$/) { "<img src='#{url}'>#{$1}" }
             end
           rescue => e
-            Rails.logger.error("Failed to pull hotlinked image: #{src}\n" + e.message + "\n" + e.backtrace.join("\n"))
+            Rails.logger.info("Failed to pull hotlinked image: #{src} post:#{post_id}\n" + e.message + "\n" + e.backtrace.join("\n"))
           ensure
             # close & delete the temp file
             hotlinked && hotlinked.close!
@@ -78,12 +83,7 @@ module Jobs
       end
 
       post.reload
-      if start_raw != post.raw
-        # post was edited - start over (after 10 minutes)
-        backoff = args.fetch(:backoff, 1) + 1
-        delay = SiteSetting.ninja_edit_window * args[:backoff]
-        Jobs.enqueue_in(delay.seconds.to_i, :pull_hotlinked_images, args.merge!(backoff: backoff))
-      elsif raw != post.raw
+      if start_raw == post.raw && raw != post.raw
         changes = { raw: raw, edit_reason: I18n.t("upload.edit_reason") }
         # we never want that job to bump the topic
         options = { bypass_bump: true }
@@ -111,6 +111,7 @@ module Jobs
       end
       # we don't want to pull images hosted on the CDN (if we use one)
       return false if Discourse.asset_host.present? && URI.parse(Discourse.asset_host).hostname == uri.hostname
+      return false if SiteSetting.s3_cdn_url.present? && URI.parse(SiteSetting.s3_cdn_url).hostname == uri.hostname
       # we don't want to pull images hosted on the main domain
       return false if URI.parse(Discourse.base_url_no_prefix).hostname == uri.hostname
       # check the domains blacklist

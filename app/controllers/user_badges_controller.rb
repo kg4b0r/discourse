@@ -1,16 +1,28 @@
 class UserBadgesController < ApplicationController
   def index
-    params.permit [:granted_before, :offset]
+    params.permit [:granted_before, :offset, :username]
 
     badge = fetch_badge_from_params
     user_badges = badge.user_badges.order('granted_at DESC, id DESC').limit(96)
     user_badges = user_badges.includes(:user, :granted_by, badge: :badge_type, post: :topic)
 
+    grant_count = nil
+
+    if params[:username]
+      user_id = User.where(username_lower: params[:username].downcase).pluck(:id).first
+      user_badges = user_badges.where(user_id: user_id) if user_id
+      grant_count = badge.user_badges.where(user_id: user_id).count
+    end
+
     if offset = params[:offset]
       user_badges = user_badges.offset(offset.to_i)
     end
 
-    render_serialized(user_badges, UserBadgeSerializer, root: "user_badges")
+    user_badges = UserBadges.new(user_badges: user_badges,
+                                 username: params[:username],
+                                 grant_count: grant_count)
+
+    render_serialized(user_badges, UserBadgesSerializer, root: :user_badge_info, include_long_description: true)
   end
 
   def username
@@ -21,12 +33,14 @@ class UserBadgesController < ApplicationController
 
     if params[:grouped]
       user_badges = user_badges.group(:badge_id)
-                               .select(UserBadge.attribute_names.map {|x| "MAX(#{x}) as #{x}" }, 'COUNT(*) as count')
+                               .select(UserBadge.attribute_names.map {|x| "MAX(#{x}) AS #{x}" }, 'COUNT(*) AS "count"')
     end
 
     user_badges = user_badges.includes(badge: [:badge_grouping, :badge_type])
+                             .includes(post: :topic)
+                             .includes(:granted_by)
 
-    render_serialized(user_badges, BasicUserBadgeSerializer, root: "user_badges")
+    render_serialized(user_badges, DetailedUserBadgeSerializer, root: :user_badges)
   end
 
   def create
@@ -39,9 +53,22 @@ class UserBadgesController < ApplicationController
     end
 
     badge = fetch_badge_from_params
-    user_badge = BadgeGranter.grant(badge, user, granted_by: current_user)
+    post_id = nil
 
-    render_serialized(user_badge, UserBadgeSerializer, root: "user_badge")
+    if params[:reason].present?
+      path = URI.parse(params[:reason]).path rescue nil
+      route = Rails.application.routes.recognize_path(path) if path
+      if route
+        topic_id = route[:topic_id].to_i
+        post_number = route[:post_number] || 1
+
+        post_id = Post.find_by(topic_id: topic_id, post_number: post_number).try(:id) if topic_id > 0
+      end
+    end
+
+    user_badge = BadgeGranter.grant(badge, user, granted_by: current_user, post_id: post_id)
+
+    render_serialized(user_badge, DetailedUserBadgeSerializer, root: "user_badge")
   end
 
   def destroy
@@ -70,7 +97,7 @@ class UserBadgesController < ApplicationController
       else
         badge = Badge.find_by(name: params[:badge_name], enabled: true)
       end
-      raise Discourse::NotFound.new if badge.blank?
+      raise Discourse::NotFound if badge.blank?
 
       badge
     end

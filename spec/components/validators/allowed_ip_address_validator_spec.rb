@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'rails_helper'
 
 describe AllowedIpAddressValidator do
 
@@ -10,7 +10,8 @@ describe AllowedIpAddressValidator do
     it 'should add an error' do
       ScreenedIpAddress.stubs(:should_block?).returns(true)
       validate
-      record.errors[:ip_address].should be_present
+      expect(record.errors[:ip_address]).to be_present
+      expect(record.errors[:ip_address][0]).to eq(I18n.t('user.ip_address.blocked'))
     end
   end
 
@@ -18,7 +19,8 @@ describe AllowedIpAddressValidator do
     it 'should add an error' do
       SpamHandler.stubs(:should_prevent_registration_from_ip?).returns(true)
       validate
-      record.errors[:ip_address].should be_present
+      expect(record.errors[:ip_address]).to be_present
+      expect(record.errors[:ip_address][0]).to eq(I18n.t('user.ip_address.max_new_accounts_per_registration_ip'))
     end
   end
 
@@ -26,7 +28,7 @@ describe AllowedIpAddressValidator do
     it "shouldn't add an error" do
       ScreenedIpAddress.stubs(:should_block?).returns(false)
       validate
-      record.errors[:ip_address].should_not be_present
+      expect(record.errors[:ip_address]).not_to be_present
     end
   end
 
@@ -35,7 +37,7 @@ describe AllowedIpAddressValidator do
       ScreenedIpAddress.expects(:should_block?).never
       record.ip_address = nil
       validate
-      record.errors[:ip_address].should_not be_present
+      expect(record.errors[:ip_address]).not_to be_present
     end
   end
 

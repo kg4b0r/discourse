@@ -1,18 +1,16 @@
-import ShowFooter from "discourse/mixins/show-footer";
+export default Discourse.Route.extend({
 
-export default Discourse.Route.extend(ShowFooter, {
-  actions: {
-    didTransition: function() {
-      return true;
-    }
+  titleToken() {
+    return I18n.t('groups.members');
   },
 
-  model: function() {
-    return this.modelFor('group').findPosts();
+  model() {
+    return this.modelFor("group");
   },
 
-  setupController: function(controller, model) {
-    controller.set('model', model);
-    this.controllerFor('group').set('showing', 'index');
+  setupController(controller, model) {
+    this.controllerFor("group").set("showing", "members");
+    controller.set("model", model);
+    model.findMembers();
   }
 });

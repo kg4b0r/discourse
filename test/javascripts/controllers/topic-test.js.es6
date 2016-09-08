@@ -1,10 +1,15 @@
+import { blank, present } from 'helpers/qunit-helpers';
+
 moduleFor('controller:topic', 'controller:topic', {
-  needs: ['controller:header', 'controller:modal', 'controller:composer', 'controller:quote-button',
-          'controller:search', 'controller:topic-progress', 'controller:application']
+  needs: ['controller:modal', 'controller:composer', 'controller:quote-button',
+          'controller:application']
 });
 
+import Topic from 'discourse/models/topic';
+import AppEvents from 'discourse/lib/app-events';
+
 var buildTopic = function() {
-  return Discourse.Topic.create({
+  return Topic.create({
     title: "Qunit Test Topic",
     participants: [
       {id: 1234,
@@ -28,8 +33,8 @@ test("editingMode", function() {
   topicController.set('model.details.can_edit', true);
   topicController.send('editTopic');
   ok(topicController.get('editingTopic'), "calling editTopic enables editing if the user can edit");
-  equal(topicController.get('newTitle'), topic.get('title'));
-  equal(topicController.get('newCategoryId'), topic.get('category_id'));
+  equal(topicController.get('buffered.title'), topic.get('title'));
+  equal(topicController.get('buffered.category_id'), topic.get('category_id'));
 
   topicController.send('cancelEditingTopic');
   ok(!topicController.get('editingTopic'), "cancelling edit mode reverts the property value");
@@ -38,7 +43,7 @@ test("editingMode", function() {
 test("toggledSelectedPost", function() {
   var tc = this.subject({ model: buildTopic() }),
       post = Discourse.Post.create({id: 123, post_number: 2}),
-      postStream = tc.get('postStream');
+      postStream = tc.get('model.postStream');
 
   postStream.appendPost(post);
   postStream.appendPost(Discourse.Post.create({id: 124, post_number: 3}));
@@ -58,9 +63,9 @@ test("toggledSelectedPost", function() {
 });
 
 test("selectAll", function() {
-  var tc = this.subject({model: buildTopic()}),
+  var tc = this.subject({model: buildTopic(), appEvents: AppEvents.create()}),
       post = Discourse.Post.create({id: 123, post_number: 2}),
-      postStream = tc.get('postStream');
+      postStream = tc.get('model.postStream');
 
   postStream.appendPost(post);
 
@@ -78,7 +83,7 @@ test("Automating setting of allPostsSelected", function() {
   var topic = buildTopic(),
       tc = this.subject({model: topic}),
       post = Discourse.Post.create({id: 123, post_number: 2}),
-      postStream = tc.get('postStream');
+      postStream = tc.get('model.postStream');
 
   topic.set('posts_count', 1);
   postStream.appendPost(post);

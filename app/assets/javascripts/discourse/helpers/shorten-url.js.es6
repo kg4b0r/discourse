@@ -1,6 +1,7 @@
-Handlebars.registerHelper('shorten-url', function(property, options) {
-  var url = Ember.Handlebars.get(this, property, options),
-      matches = url.match(/\//g);
+import { registerUnbound } from 'discourse/lib/helpers';
+
+registerUnbound('shorten-url', function(url) {
+  var matches = url.match(/\//g);
 
   if (matches && matches.length === 3) {
     url = url.replace(/\/$/, '');

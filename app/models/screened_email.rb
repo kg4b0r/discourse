@@ -57,7 +57,7 @@ class ScreenedEmail < ActiveRecord::Base
         end
       end
     end
-    return matrix.last.last
+    matrix.last.last
   end
 
 end
@@ -67,7 +67,7 @@ end
 # Table name: screened_emails
 #
 #  id            :integer          not null, primary key
-#  email         :string(255)      not null
+#  email         :string           not null
 #  action_type   :integer          not null
 #  match_count   :integer          default(0), not null
 #  last_match_at :datetime

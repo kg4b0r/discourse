@@ -2,8 +2,10 @@ class Admin::SiteCustomizationsController < Admin::AdminController
 
   before_filter :enable_customization
 
+  skip_before_filter :check_xhr, only: [:show]
+
   def index
-    @site_customizations = SiteCustomization.all
+    @site_customizations = SiteCustomization.order(:name)
 
     respond_to do |format|
       format.json { render json: @site_customizations }
@@ -30,7 +32,7 @@ class Admin::SiteCustomizationsController < Admin::AdminController
 
     respond_to do |format|
       if @site_customization.update_attributes(site_customization_params)
-        format.json { head :no_content }
+        format.json { render json: @site_customization, status: :created}
       else
         log_record.destroy if log_record
         format.json { render json: @site_customization.errors, status: :unprocessable_entity }
@@ -48,14 +50,35 @@ class Admin::SiteCustomizationsController < Admin::AdminController
     end
   end
 
+  def show
+    @site_customization = SiteCustomization.find(params[:id])
+
+    respond_to do |format|
+      format.json do
+        check_xhr
+        render json: SiteCustomizationSerializer.new(@site_customization)
+      end
+
+      format.any(:html, :text) do
+        raise RenderEmpty.new if request.xhr?
+
+        response.headers['Content-Disposition'] = "attachment; filename=#{@site_customization.name.parameterize}.dcstyle.json"
+        response.sending_file = true
+        render json: SiteCustomizationSerializer.new(@site_customization)
+      end
+    end
+
+  end
+
   private
 
     def site_customization_params
       params.require(:site_customization)
-            .permit(:name, :stylesheet, :header, :footer,
-                    :mobile_stylesheet, :mobile_header, :mobile_footer,
-                    :position, :enabled, :key, :override_default_style,
-                    :stylesheet_baked)
+            .permit(:name, :stylesheet, :header, :top, :footer,
+                    :mobile_stylesheet, :mobile_header, :mobile_top, :mobile_footer,
+                    :head_tag, :body_tag,
+                    :position, :enabled, :key,
+                    :stylesheet_baked, :embedded_css)
     end
 
     def log_site_customization_change(old_record, new_params)

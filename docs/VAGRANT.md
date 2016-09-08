@@ -11,7 +11,7 @@ on Discourse with:
 
 1. Install Git: http://git-scm.com/downloads (or [GitHub for Windows](http://windows.github.com/) if you want a GUI)
 2. Install VirtualBox: https://www.virtualbox.org/wiki/Downloads
-3. Install Vagrant: http://www.vagrantup.com/ (We require Vagrant 1.1.2+ or later)
+3. Install Vagrant: http://www.vagrantup.com/ (We require Vagrant 1.7.2 or later)
 4. Open a terminal
 5. Clone the project: `git clone https://github.com/discourse/discourse.git`
 6. Enter the project directory: `cd discourse`
@@ -71,7 +71,7 @@ You may use this client to connect to the VM by using ```vagrant/vagrant``` as y
 PuTTYGen to import the insecure_private_key file](http://jason.sharonandjason.com/key_based_putty_logins_mini_how_to.htm)
 (mentioned above) into a PuTTY profile to quickly access your VM.
 
-### Keeping your VM up to date
+### Keeping your VM up to date (and first install)
 
 Now you're in a virtual machine is almost ready to start developing. It's a good idea to perform the following instructions
 *every time* you pull from master to ensure your environment is still up to date.
@@ -87,12 +87,23 @@ bundle exec rake db:migrate
 Once your VM is up to date, you can start a rails instance using the following command from the /vagrant directory:
 
 ```
-bundle exec rails s
+bundle exec rails s -b 0.0.0.0
 ```
 
 In a few seconds, rails will start serving pages. To access them, open a web browser to [http://localhost:4000](http://localhost:4000) - if it all worked you should see discourse! Congratulations, you are ready to start working!
 
 You can now edit files on your local file system, using your favorite text editor or IDE. When you reload your web browser, it should have the latest changes.
+
+### Creating an Admin User
+
+You'll want an admin account to be able to do anything fun on your new Discourse environment. Enter your vagrant image by using `vagrant ssh` then
+run the following command and follow the instructions:
+
+```bash
+bundle exec rake admin:create
+```
+
+Your admin account should be approved. Log in in your browser and you're good to go!
 
 ### Tests
 
@@ -103,8 +114,20 @@ To use it, follow all the above steps. Once rails is running, open a new termina
 ```
 vagrant ssh
 cd /vagrant
-RAILS_ENV=test bundle exec rake db:drop db:create db:migrate
+RAILS_ENV=test bundle exec rake db:migrate
 bundle exec rake autospec p l=5
+```
+
+When developing a plugin (the *poll* plugin for instance), the following can be used to only run all tests from the *spec* directory:
+
+```
+bundle exec rake plugin:spec poll
+```
+
+or just a single file with:
+
+```
+LOAD_PLUGINS=1 bundle exec rspec plugins/poll/spec/controllers/posts_controller_spec.rb
 ```
 
 For more insight into testing Discourse, see [this discussion](http://rubyrogues.com/117-rr-discourse-part-2-with-sam-saffron-and-robin-ward/) with the Ruby Rogues.
@@ -122,17 +145,10 @@ Mailcatcher is used to avoid the whole issue of actually sending emails: https:/
 Mailcatcher is already installed in the vm, and there's an alias to launch it:
 
 ```
-mc
+mailcatcher --http-ip=0.0.0.0
 ```
 
 Then in a browser, go to [http://localhost:4080](http://localhost:4080). Sent emails will be received by mailcatcher and shown in its web ui.
-
-If for some reason mailcatcher is not installed, install and launch it with these commands:
-
-```
-gem install mailcatcher
-mailcatcher --http-ip 0.0.0.0
-```
 
 ### Shutting down the VM
 
@@ -141,4 +157,3 @@ When you're done working on Discourse, you can shut down Vagrant with:
 ```
 vagrant halt
 ```
-

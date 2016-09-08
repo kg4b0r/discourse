@@ -32,6 +32,9 @@ module Discourse
     require 'es6_module_transpiler/rails'
     require 'js_locale_helper'
 
+    # tiny file needed by site settings
+    require 'highlight_js/highlight_js'
+
     # mocha hates us, active_support/testing/mochaing.rb line 2 is requiring the wrong
     #  require, patched in source, on upgrade remove this
     if Rails.env.test? || Rails.env.development?
@@ -41,6 +44,11 @@ module Discourse
         Mocha::Deprecation.mode = :disabled
       end
     end
+
+    # Disable so this is only run manually
+    # we may want to change this later on
+    # issue is image_optim crashes on missing dependencies
+    config.assets.image_optim = false
 
     # Custom directories with classes and modules you want to be autoloadable.
     config.autoload_paths += Dir["#{config.root}/app/serializers"]
@@ -53,17 +61,18 @@ module Discourse
 
     config.assets.paths += %W(#{config.root}/config/locales #{config.root}/public/javascripts)
 
+    # Allows us to skip minifincation on some files
+    config.assets.skip_minification = []
+
     # explicitly precompile any images in plugins ( /assets/images ) path
     config.assets.precompile += [lambda do |filename, path|
       path =~ /assets\/images/ && !%w(.js .css).include?(File.extname(filename))
     end]
 
-    config.assets.precompile += ['vendor.js', 'common.css', 'desktop.css', 'mobile.css', 'admin.js', 'admin.css', 'shiny/shiny.css', 'preload_store.js', 'browser-update.js', 'embed.css', 'break_string.js']
-
-    # Precompile all defer
-    Dir.glob("#{config.root}/app/assets/javascripts/defer/*.js").each do |file|
-      config.assets.precompile << "defer/#{File.basename(file)}"
-    end
+    config.assets.precompile += ['vendor.js', 'common.css', 'desktop.css', 'mobile.css',
+                                 'admin.js', 'admin.css', 'shiny/shiny.css', 'preload-store.js.es6',
+                                 'browser-update.js', 'embed.css', 'break_string.js', 'ember_jquery.js',
+                                 'pretty-text-bundle.js']
 
     # Precompile all available locales
     Dir.glob("#{config.root}/app/assets/javascripts/locales/*.js.erb").each do |file|
@@ -82,8 +91,9 @@ module Discourse
     # Run "rake -D time" for a list of tasks for finding time zone names. Default is UTC.
     config.time_zone = 'UTC'
 
-    # auto-load server locale in plugins
-    config.i18n.load_path += Dir["#{Rails.root}/plugins/*/config/locales/server.*.yml"]
+    # auto-load locales in plugins
+    # NOTE: we load both client & server locales since some might be used by PrettyText
+    config.i18n.load_path += Dir["#{Rails.root}/plugins/*/config/locales/*.yml"]
 
     # Configure the default encoding used in templates for Ruby 1.9.
     config.encoding = 'utf-8'
@@ -92,6 +102,7 @@ module Discourse
     config.filter_parameters += [
         :password,
         :pop3_polling_password,
+        :api_key,
         :s3_secret_access_key,
         :twitter_consumer_secret,
         :facebook_app_secret,
@@ -110,10 +121,7 @@ module Discourse
     # see: http://stackoverflow.com/questions/11894180/how-does-one-correctly-add-custom-sql-dml-in-migrations/11894420#11894420
     config.active_record.schema_format = :sql
 
-    if rails_master?
-      # Opt-into the default behavior in Rails 5
-      # config.active_record.raise_in_transactional_callbacks = true
-    end
+    config.active_record.raise_in_transactional_callbacks = true
 
     # per https://www.owasp.org/index.php/Password_Storage_Cheat_Sheet
     config.pbkdf2_iterations = 64000
@@ -133,9 +141,11 @@ module Discourse
 
     # Our templates shouldn't start with 'discourse/templates'
     config.handlebars.templates_root = 'discourse/templates'
+    config.handlebars.raw_template_namespace = "Ember.TEMPLATES"
 
     require 'discourse_redis'
     require 'logster/redis_store'
+    require 'freedom_patches/redis'
     # Use redis for our cache
     config.cache_store = DiscourseRedis.new_redis_store
     $redis = DiscourseRedis.new
@@ -153,6 +163,10 @@ module Discourse
     require 'auth'
     Discourse.activate_plugins! unless Rails.env.test? and ENV['LOAD_PLUGINS'] != "1"
 
+    if GlobalSetting.relative_url_root.present?
+      config.relative_url_root = GlobalSetting.relative_url_root
+    end
+
     config.after_initialize do
       # So open id logs somewhere sane
       OpenID::Util.logger = Rails.logger
@@ -165,5 +179,13 @@ module Discourse
       require 'rbtrace'
     end
 
+  end
+end
+
+if defined?(PhusionPassenger)
+  PhusionPassenger.on_event(:starting_worker_process) do |forked|
+    if forked
+      Discourse.after_fork
+    end
   end
 end

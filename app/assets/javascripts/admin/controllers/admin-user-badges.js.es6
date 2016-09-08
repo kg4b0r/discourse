@@ -1,17 +1,46 @@
-/**
-  This controller supports the interface for granting and revoking badges from
-  individual users.
+import UserBadge from 'discourse/models/user-badge';
 
-  @class AdminUserBadgesController
-  @extends Ember.ArrayController
-  @namespace Discourse
-  @module Discourse
-**/
 export default Ember.ArrayController.extend({
   needs: ["adminUser"],
-  user: Em.computed.alias('controllers.adminUser'),
+  user: Em.computed.alias('controllers.adminUser.model'),
   sortProperties: ['granted_at'],
   sortAscending: false,
+
+  groupedBadges: function(){
+    const allBadges = this.get('model');
+
+    var grouped = _.groupBy(allBadges, badge => badge.badge_id);
+
+    var expanded = [];
+    const expandedBadges = allBadges.get('expandedBadges');
+
+    _(grouped).each(function(badges){
+      var lastGranted = badges[0].granted_at;
+
+      _.each(badges, function(badge) {
+        lastGranted = lastGranted < badge.granted_at ? badge.granted_at : lastGranted;
+      });
+
+      if(badges.length===1 || _.include(expandedBadges, badges[0].badge.id)){
+        _.each(badges, badge => expanded.push(badge));
+        return;
+      }
+
+      var result = {
+        badge: badges[0].badge,
+        granted_at: lastGranted,
+        badges: badges,
+        count: badges.length,
+        grouped: true
+      };
+
+      expanded.push(result);
+    });
+
+    return _(expanded).sortBy(group => group.granted_at).reverse().value();
+
+
+  }.property('model', 'model.[]', 'model.expandedBadges.[]'),
 
   /**
     Array of badges that have not been granted to this user.
@@ -27,13 +56,13 @@ export default Ember.ArrayController.extend({
 
     var badges = [];
     this.get('badges').forEach(function(badge) {
-      if (badge.get('multiple_grant') || !granted[badge.get('id')]) {
+      if (badge.get('enabled') && (badge.get('multiple_grant') || !granted[badge.get('id')])) {
         badges.push(badge);
       }
     });
 
-    return badges;
-  }.property('badges.@each', 'model.@each'),
+    return _.sortBy(badges, badge => badge.get('name'));
+  }.property('badges.[]', 'model.[]'),
 
   /**
     Whether there are any badges that can be granted.
@@ -45,6 +74,12 @@ export default Ember.ArrayController.extend({
 
   actions: {
 
+    expandGroup: function(userBadge){
+      const model = this.get('model');
+      model.set('expandedBadges', model.get('expandedBadges') || []);
+      model.get('expandedBadges').pushObject(userBadge.badge.id);
+    },
+
     /**
       Grant the selected badge to the user.
 
@@ -53,7 +88,8 @@ export default Ember.ArrayController.extend({
     **/
     grantBadge: function(badgeId) {
       var self = this;
-      Discourse.UserBadge.grant(badgeId, this.get('user.username')).then(function(userBadge) {
+      UserBadge.grant(badgeId, this.get('user.username'), this.get('badgeReason')).then(function(userBadge) {
+        self.set('badgeReason', '');
         self.pushObject(userBadge);
         Ember.run.next(function() {
           // Update the selected badge ID after the combobox has re-rendered.
@@ -68,12 +104,6 @@ export default Ember.ArrayController.extend({
       });
     },
 
-    /**
-      Revoke the selected userBadge.
-
-      @method revokeBadge
-      @param {Discourse.UserBadge} userBadge the `Discourse.UserBadge` instance that needs to be revoked.
-    **/
     revokeBadge: function(userBadge) {
       var self = this;
       return bootbox.confirm(I18n.t("admin.badges.revoke_confirm"), I18n.t("no_value"), I18n.t("yes_value"), function(result) {

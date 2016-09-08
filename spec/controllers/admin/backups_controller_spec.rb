@@ -1,9 +1,9 @@
-require "spec_helper"
+require "rails_helper"
 
 describe Admin::BackupsController do
 
   it "is a subclass of AdminController" do
-    (Admin::BackupsController < Admin::AdminController).should == true
+    expect(Admin::BackupsController < Admin::AdminController).to eq(true)
   end
 
   let(:backup_filename) { "2014-02-10-065935.tar.gz" }
@@ -28,7 +28,7 @@ describe Admin::BackupsController do
 
           xhr :get, :index, format: :html
 
-          response.should be_success
+          expect(response).to be_success
         end
 
       end
@@ -40,11 +40,11 @@ describe Admin::BackupsController do
 
           xhr :get, :index, format: :json
 
-          response.should be_success
+          expect(response).to be_success
 
           json = JSON.parse(response.body)
-          json[0]["filename"].should == "backup1"
-          json[1]["filename"].should == "backup2"
+          expect(json[0]["filename"]).to eq("backup1")
+          expect(json[1]["filename"]).to eq("backup2")
         end
 
       end
@@ -58,7 +58,7 @@ describe Admin::BackupsController do
 
         xhr :get, :status
 
-        response.should be_success
+        expect(response).to be_success
       end
 
     end
@@ -66,23 +66,12 @@ describe Admin::BackupsController do
     describe ".create" do
 
       it "starts a backup" do
-        BackupRestore.expects(:backup!).with(@admin.id, { publish_to_message_bus: true, with_uploads: false })
+        BackupRestore.expects(:backup!).with(@admin.id, publish_to_message_bus: true, with_uploads: false, client_id: "foo")
 
-        xhr :post, :create, { with_uploads: false }
+        xhr :post, :create, with_uploads: false, client_id: "foo"
 
-        response.should be_success
+        expect(response).to be_success
       end
-
-      # it "catches OperationRunningError exception" do
-      #   BackupRestore.expects(:is_operation_running?).returns(true)
-
-      #   xhr :post, :create
-
-      #   response.should be_success
-
-      #   json = JSON.parse(response.body)
-      #   json["message"].should_not == nil
-      # end
 
     end
 
@@ -93,7 +82,7 @@ describe Admin::BackupsController do
 
         xhr :delete, :cancel
 
-        response.should be_success
+        expect(response).to be_success
       end
 
     end
@@ -110,8 +99,8 @@ describe Admin::BackupsController do
 
         get :show, id: backup_filename
 
-        response.headers['Content-Length'].should == 5
-        response.headers['Content-Disposition'].should =~ /attachment; filename/
+        expect(response.headers['Content-Length']).to eq(5)
+        expect(response.headers['Content-Disposition']).to match(/attachment; filename/)
       end
 
       it "returns 404 when the backup does not exist" do
@@ -119,7 +108,7 @@ describe Admin::BackupsController do
 
         get :show, id: backup_filename
 
-        response.should be_not_found
+        expect(response).to be_not_found
       end
 
     end
@@ -132,14 +121,14 @@ describe Admin::BackupsController do
         Backup.expects(:[]).with(backup_filename).returns(b)
         b.expects(:remove)
         xhr :delete, :destroy, id: backup_filename
-        response.should be_success
+        expect(response).to be_success
       end
 
       it "doesn't remove the backup if not found" do
         Backup.expects(:[]).with(backup_filename).returns(nil)
         b.expects(:remove).never
         xhr :delete, :destroy, id: backup_filename
-        response.should_not be_success
+        expect(response).not_to be_success
       end
 
     end
@@ -155,18 +144,20 @@ describe Admin::BackupsController do
 
         xhr :get, :logs, format: :html
 
-        response.should be_success
+        expect(response).to be_success
       end
     end
 
     describe ".restore" do
 
       it "starts a restore" do
-        BackupRestore.expects(:restore!).with(@admin.id, backup_filename, true)
+        expect(SiteSetting.disable_emails).to eq(false)
+        BackupRestore.expects(:restore!).with(@admin.id, filename: backup_filename, publish_to_message_bus: true, client_id: "foo")
 
-        xhr :post, :restore, id: backup_filename
+        xhr :post, :restore, id: backup_filename, client_id: "foo"
 
-        response.should be_success
+        expect(SiteSetting.disable_emails).to eq(true)
+        expect(response).to be_success
       end
 
     end
@@ -178,7 +169,7 @@ describe Admin::BackupsController do
 
         xhr :get, :rollback
 
-        response.should be_success
+        expect(response).to be_success
       end
 
     end
@@ -190,7 +181,7 @@ describe Admin::BackupsController do
 
         xhr :put, :readonly, enable: true
 
-        response.should be_success
+        expect(response).to be_success
       end
 
       it "disables readonly mode" do
@@ -198,7 +189,7 @@ describe Admin::BackupsController do
 
         xhr :put, :readonly, enable: false
 
-        response.should be_success
+        expect(response).to be_success
       end
 
     end

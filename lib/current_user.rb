@@ -27,7 +27,11 @@ module CurrentUser
   end
 
   def current_user
-    c = current_user_provider.current_user
+    current_user_provider.current_user
+  end
+
+  def refresh_session(user)
+    current_user_provider.refresh_session(user,session,cookies)
   end
 
   private

@@ -13,11 +13,12 @@
         margin: 0 0 5px 0;
       }
       input[type="file"] {
-        font-size: 14px;
+        font-size: 1em;
         line-height: 18px;
       }
       .description, .hint {
-        color: scale-color($primary, $lightness: 50%);
+        color: dark-light-choose(scale-color($primary, $lightness: 50%), scale-color($secondary, $lightness: 50%));
+        display: block;
       }
       .hint {
         font-style: italic;
@@ -36,4 +37,7 @@
 
 .image-upload-controls {
   padding: 10px;
+  label.btn {
+    padding: 6px 10px;
+  }
 }

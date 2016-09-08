@@ -1,4 +1,4 @@
-require 'spec_helper'
+require 'rails_helper'
 
 describe StaffActionLogger do
 
@@ -33,6 +33,20 @@ describe StaffActionLogger do
     end
   end
 
+  describe "log_show_emails" do
+    it "logs the user history" do
+      expect { logger.log_show_emails([admin]) }.to change(UserHistory, :count).by(1)
+    end
+
+    it "doesn't raise an exception with nothing to log" do
+      expect { logger.log_show_emails([]) }.not_to raise_error
+    end
+
+    it "doesn't raise an exception with nil input" do
+      expect { logger.log_show_emails(nil) }.not_to raise_error
+    end
+  end
+
   describe 'log_post_deletion' do
     let(:deleted_post) { Fabricate(:post) }
 
@@ -48,6 +62,13 @@ describe StaffActionLogger do
 
     it 'creates a new UserHistory record' do
       expect { log_post_deletion }.to change { UserHistory.count }.by(1)
+    end
+
+    it 'does not explode if post does not have a user' do
+      expect {
+        deleted_post.update_columns(user_id: nil)
+        log_post_deletion
+      }.to change { UserHistory.count }.by(1)
     end
   end
 
@@ -93,7 +114,7 @@ describe StaffActionLogger do
 
     it 'creates a new UserHistory record' do
       expect { log_trust_level_change }.to change { UserHistory.count }.by(1)
-      UserHistory.last.details.should include "new trust level: #{new_trust_level}"
+      expect(UserHistory.last.details).to include "new trust level: #{new_trust_level}"
     end
   end
 
@@ -118,21 +139,21 @@ describe StaffActionLogger do
 
     it "logs new site customizations" do
       log_record = logger.log_site_customization_change(nil, valid_params)
-      log_record.subject.should == valid_params[:name]
-      log_record.previous_value.should == nil
-      log_record.new_value.should be_present
+      expect(log_record.subject).to eq(valid_params[:name])
+      expect(log_record.previous_value).to eq(nil)
+      expect(log_record.new_value).to be_present
       json = ::JSON.parse(log_record.new_value)
-      json['stylesheet'].should be_present
-      json['header'].should be_present
+      expect(json['stylesheet']).to be_present
+      expect(json['header']).to be_present
     end
 
     it "logs updated site customizations" do
       existing = SiteCustomization.new(name: 'Banana', stylesheet: "body {color: yellow;}", header: "h1 {color: brown;}")
       log_record = logger.log_site_customization_change(existing, valid_params)
-      log_record.previous_value.should be_present
+      expect(log_record.previous_value).to be_present
       json = ::JSON.parse(log_record.previous_value)
-      json['stylesheet'].should == existing.stylesheet
-      json['header'].should == existing.header
+      expect(json['stylesheet']).to eq(existing.stylesheet)
+      expect(json['header']).to eq(existing.header)
     end
   end
 
@@ -144,11 +165,21 @@ describe StaffActionLogger do
     it "creates a new UserHistory record" do
       site_customization = SiteCustomization.new(name: 'Banana', stylesheet: "body {color: yellow;}", header: "h1 {color: brown;}")
       log_record = logger.log_site_customization_destroy(site_customization)
-      log_record.previous_value.should be_present
-      log_record.new_value.should == nil
+      expect(log_record.previous_value).to be_present
+      expect(log_record.new_value).to eq(nil)
       json = ::JSON.parse(log_record.previous_value)
-      json['stylesheet'].should == site_customization.stylesheet
-      json['header'].should == site_customization.header
+      expect(json['stylesheet']).to eq(site_customization.stylesheet)
+      expect(json['header']).to eq(site_customization.header)
+    end
+  end
+
+  describe "log_site_text_change" do
+    it "raises an error when params are invalid" do
+      expect { logger.log_site_text_change(nil, 'new text', 'old text') }.to raise_error(Discourse::InvalidParameters)
+    end
+
+    it "creates a new UserHistory record" do
+      expect { logger.log_site_text_change('created', 'new text', 'old text') }.to change { UserHistory.count }.by(1)
     end
   end
 
@@ -167,9 +198,9 @@ describe StaffActionLogger do
     it "creates a new UserHistory record" do
       reason = "He was a big meanie."
       log_record = logger.log_user_suspend(user, reason)
-      log_record.should be_valid
-      log_record.details.should == reason
-      log_record.target_user.should == user
+      expect(log_record).to be_valid
+      expect(log_record.details).to eq(reason)
+      expect(log_record.target_user).to eq(user)
     end
   end
 
@@ -182,8 +213,8 @@ describe StaffActionLogger do
 
     it "creates a new UserHistory record" do
       log_record = logger.log_user_unsuspend(user)
-      log_record.should be_valid
-      log_record.target_user.should == user
+      expect(log_record).to be_valid
+      expect(log_record.target_user).to eq(user)
     end
   end
 
@@ -198,9 +229,9 @@ describe StaffActionLogger do
 
     it "creates a new UserHistory record" do
       log_record = logger.log_badge_grant(user_badge)
-      log_record.should be_valid
-      log_record.target_user.should == user
-      log_record.details.should == badge.name
+      expect(log_record).to be_valid
+      expect(log_record.target_user).to eq(user)
+      expect(log_record.details).to eq(badge.name)
     end
   end
 
@@ -215,9 +246,9 @@ describe StaffActionLogger do
 
     it "creates a new UserHistory record" do
       log_record = logger.log_badge_revoke(user_badge)
-      log_record.should be_valid
-      log_record.target_user.should == user
-      log_record.details.should == badge.name
+      expect(log_record).to be_valid
+      expect(log_record.target_user).to eq(user)
+      expect(log_record.details).to eq(badge.name)
     end
   end
 
@@ -227,8 +258,115 @@ describe StaffActionLogger do
 
     it 'creates a new UserHistory record' do
       log_record = logger.log_roll_up(subnets)
-      log_record.should be_valid
-      log_record.details.should == subnets.join(", ")
+      expect(log_record).to be_valid
+      expect(log_record.details).to eq(subnets.join(", "))
+    end
+  end
+
+  describe 'log_custom' do
+    it "raises an error when `custom_type` is missing" do
+      expect { logger.log_custom(nil) }.to raise_error(Discourse::InvalidParameters)
+    end
+
+    it "creates the UserHistory record" do
+      logged = logger.log_custom('clicked_something', {
+        evil: 'trout',
+        clicked_on: 'thing',
+        topic_id: 1234
+      })
+      expect(logged).to be_valid
+      expect(logged.details).to eq("evil: trout\nclicked_on: thing")
+      expect(logged.action).to eq(UserHistory.actions[:custom_staff])
+      expect(logged.custom_type).to eq('clicked_something')
+      expect(logged.topic_id).to be === 1234
+    end
+  end
+
+  describe 'log_category_settings_change' do
+    let(:category) { Fabricate(:category, name: 'haha') }
+    let(:category_group) { Fabricate(:category_group, category: category, permission_type: 1) }
+
+    it "raises an error when category is missing" do
+      expect { logger.log_category_settings_change(nil, nil) }.to raise_error(Discourse::InvalidParameters)
+    end
+
+    it "creates new UserHistory records" do
+      attributes = {
+        name: 'new_name',
+        permissions: { category_group.group_name => 2 }
+      }
+
+      category.update!(attributes)
+
+      logger.log_category_settings_change(category, attributes,
+        { category_group.group_name => category_group.permission_type }
+      )
+
+      expect(UserHistory.count).to eq(2)
+
+      permission_user_history = UserHistory.find_by_subject('permissions')
+      expect(permission_user_history.category_id).to eq(category.id)
+      expect(permission_user_history.previous_value).to eq({ category_group.group_name => 1 }.to_json)
+      expect(permission_user_history.new_value).to eq({ category_group.group_name => 2 }.to_json)
+      expect(permission_user_history.action).to eq(UserHistory.actions[:change_category_settings])
+      expect(permission_user_history.context).to eq(category.url)
+
+      name_user_history = UserHistory.find_by_subject('name')
+      expect(name_user_history.category).to eq(category)
+      expect(name_user_history.previous_value).to eq('haha')
+      expect(name_user_history.new_value).to eq('new_name')
+    end
+
+    it "does not log permissions changes for category visible to everyone" do
+      attributes = { name: 'new_name' }
+      old_permission = category.permissions_params
+      category.update!(attributes)
+
+      logger.log_category_settings_change(category, attributes.merge({ permissions: { "everyone" => 1 } }), old_permission)
+
+      expect(UserHistory.count).to eq(1)
+      expect(UserHistory.find_by_subject('name').category).to eq(category)
+    end
+  end
+
+  describe 'log_category_deletion' do
+    let(:parent_category) { Fabricate(:category) }
+    let(:category) { Fabricate(:category, parent_category: parent_category) }
+
+    it "raises an error when category is missing" do
+      expect { logger.log_category_deletion(nil) }.to raise_error(Discourse::InvalidParameters)
+    end
+
+    it "creates a new UserHistory record" do
+      logger.log_category_deletion(category)
+
+      expect(UserHistory.count).to eq(1)
+      user_history = UserHistory.last
+
+      expect(user_history.subject).to eq(nil)
+      expect(user_history.category).to eq(category)
+      expect(user_history.details).to include("parent_category: #{parent_category.name}")
+      expect(user_history.context).to eq(category.url)
+      expect(user_history.action).to eq(UserHistory.actions[:delete_category])
+    end
+  end
+
+  describe 'log_category_creation' do
+    let(:category) { Fabricate(:category) }
+
+    it "raises an error when category is missing" do
+      expect { logger.log_category_deletion(nil) }.to raise_error(Discourse::InvalidParameters)
+    end
+
+    it "creates a new UserHistory record" do
+      logger.log_category_creation(category)
+
+      expect(UserHistory.count).to eq(1)
+      user_history = UserHistory.last
+
+      expect(user_history.category).to eq(category)
+      expect(user_history.context).to eq(category.url)
+      expect(user_history.action).to eq(UserHistory.actions[:create_category])
     end
   end
 end
