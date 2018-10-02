@@ -13,19 +13,31 @@ class UserOptionSerializer < ApplicationSerializer
              :digest_after_minutes,
              :automatically_unpin_topics,
              :auto_track_topics_after_msecs,
+             :notification_level_when_replying,
              :new_topic_duration_minutes,
              :email_previous_replies,
              :email_in_reply_to,
              :like_notification_frequency,
-             :include_tl0_in_digests
-
+             :include_tl0_in_digests,
+             :theme_ids,
+             :theme_key_seq,
+             :allow_private_messages,
+             :homepage_id,
 
   def auto_track_topics_after_msecs
     object.auto_track_topics_after_msecs || SiteSetting.default_other_auto_track_topics_after_msecs
   end
 
+  def notification_level_when_replying
+    object.notification_level_when_replying || SiteSetting.default_other_notification_level_when_replying
+  end
+
   def new_topic_duration_minutes
     object.new_topic_duration_minutes || SiteSetting.default_other_new_topic_duration_minutes
+  end
+
+  def theme_ids
+    object.theme_ids.presence || [SiteSetting.default_theme_id]
   end
 
 end

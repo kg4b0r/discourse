@@ -1,27 +1,39 @@
 require "digest/sha1"
-require_dependency "image_sizer"
 require_dependency "file_helper"
 require_dependency "url_helper"
 require_dependency "db_helper"
 require_dependency "validators/upload_validator"
 require_dependency "file_store/local_store"
+require_dependency "base62"
 
 class Upload < ActiveRecord::Base
+  SHA1_LENGTH = 40
+
   belongs_to :user
 
   has_many :post_uploads, dependent: :destroy
   has_many :posts, through: :post_uploads
 
   has_many :optimized_images, dependent: :destroy
+  has_many :user_uploads, dependent: :destroy
 
-  attr_accessor :is_attachment_for_group_message
+  attr_accessor :for_group_message
+  attr_accessor :for_theme
+  attr_accessor :for_private_message
+  attr_accessor :for_export
 
   validates_presence_of :filesize
   validates_presence_of :original_filename
 
   validates_with ::Validators::UploadValidator
 
-  def thumbnail(width = self.width, height = self.height)
+  after_destroy do
+    User.where(uploaded_avatar_id: self.id).update_all(uploaded_avatar_id: nil)
+    UserAvatar.where(gravatar_upload_id: self.id).update_all(gravatar_upload_id: nil)
+    UserAvatar.where(custom_upload_id: self.id).update_all(custom_upload_id: nil)
+  end
+
+  def thumbnail(width = self.thumbnail_width, height = self.thumbnail_height)
     optimized_images.find_by(width: width, height: height)
   end
 
@@ -29,19 +41,59 @@ class Upload < ActiveRecord::Base
     thumbnail(width, height).present?
   end
 
-  def create_thumbnail!(width, height, crop=false)
+  def create_thumbnail!(width, height, crop = false)
     return unless SiteSetting.create_thumbnails?
 
     opts = {
-      filename: self.original_filename,
       allow_animation: SiteSetting.allow_animated_thumbnails,
       crop: crop
     }
 
-    if thumbnail = OptimizedImage.create_for(self, width, height, opts)
-      self.width = width
-      self.height = height
+    if get_optimized_image(width, height, opts)
       save(validate: false)
+    end
+  end
+
+  # this method attempts to correct old incorrect extensions
+  def get_optimized_image(width, height, opts)
+    if (!extension || extension.length == 0)
+      fix_image_extension
+    end
+
+    opts = opts.merge(raise_on_error: true)
+    begin
+      OptimizedImage.create_for(self, width, height, opts)
+    rescue
+      opts = opts.merge(raise_on_error: false)
+      if fix_image_extension
+        OptimizedImage.create_for(self, width, height, opts)
+      else
+        nil
+      end
+    end
+  end
+
+  def fix_image_extension
+    return false if extension == "unknown"
+
+    begin
+      # this is relatively cheap once cached
+      original_path = Discourse.store.path_for(self)
+      if original_path.blank?
+        external_copy = Discourse.store.download(self) rescue nil
+        original_path = external_copy.try(:path)
+      end
+
+      image_info = FastImage.new(original_path) rescue nil
+      new_extension = image_info&.type&.to_s || "unknown"
+
+      if new_extension != self.extension
+        self.update_columns(extension: new_extension)
+        true
+      end
+    rescue
+      self.update_columns(extension: "unknown")
+      true
     end
   end
 
@@ -52,192 +104,93 @@ class Upload < ActiveRecord::Base
     end
   end
 
-  def extension
-    File.extname(original_filename)
+  def short_url
+    "upload://#{Base62.encode(sha1.hex)}.#{extension}"
   end
 
-  # list of image types that will be cropped
-  CROPPED_IMAGE_TYPES ||= %w{avatar profile_background card_background}
+  def local?
+    !(url =~ /^(https?:)?\/\//)
+  end
 
-  WHITELISTED_SVG_ELEMENTS ||= %w{
-    circle
-    clippath
-    defs
-    ellipse
-    g
-    line
-    linearGradient
-    path
-    polygon
-    polyline
-    radialGradient
-    rect
-    stop
-    svg
-    text
-    textpath
-    tref
-    tspan
-    use
-  }
+  def fix_dimensions!
+    return if !FileHelper.is_supported_image?("image.#{extension}")
+
+    path =
+      if local?
+        Discourse.store.path_for(self)
+      else
+        Discourse.store.download(self).path
+      end
+
+    self.width, self.height = size = FastImage.new(path).size
+    self.thumbnail_width, self.thumbnail_height = ImageSizer.resize(*size)
+    nil
+  end
+
+  # on demand image size calculation, this allows us to null out image sizes
+  # and still handle as needed
+  def get_dimension(key)
+    if v = read_attribute(key)
+      return v
+    end
+    fix_dimensions!
+    read_attribute(key)
+  end
+
+  def width
+    get_dimension(:width)
+  end
+
+  def height
+    get_dimension(:height)
+  end
+
+  def thumbnail_width
+    get_dimension(:thumbnail_width)
+  end
+
+  def thumbnail_height
+    get_dimension(:thumbnail_height)
+  end
+
+  def self.sha1_from_short_url(url)
+    if url =~ /(upload:\/\/)?([a-zA-Z0-9]+)(\..*)?/
+      sha1 = Base62.decode($2).to_s(16)
+
+      if sha1.length > SHA1_LENGTH
+        nil
+      else
+        sha1.rjust(SHA1_LENGTH, '0')
+      end
+    end
+  end
 
   def self.generate_digest(path)
     Digest::SHA1.file(path).hexdigest
   end
 
-  def self.svg_whitelist_xpath
-    @@svg_whitelist_xpath ||= "//*[#{WHITELISTED_SVG_ELEMENTS.map { |e| "name()!='#{e}'" }.join(" and ") }]"
-  end
-
-  # options
-  #   - content_type
-  #   - origin (url)
-  #   - image_type ("avatar", "profile_background", "card_background")
-  #   - is_attachment_for_group_message (boolean)
-  def self.create_for(user_id, file, filename, filesize, options = {})
-    DistributedMutex.synchronize("upload_#{user_id}_#{filename}") do
-      # do some work on images
-      if FileHelper.is_image?(filename) && is_actual_image?(file)
-        if filename[/\.svg$/i]
-          # whitelist svg elements
-          doc = Nokogiri::XML(file)
-          doc.xpath(svg_whitelist_xpath).remove
-          File.write(file.path, doc.to_s)
-          file.rewind
-        else
-          # fix orientation first
-          fix_image_orientation(file.path) if should_optimize?(file.path)
-        end
-
-        # retrieve image info
-        image_info = FastImage.new(file)
-        w, h = *(image_info.try(:size) || [0, 0])
-
-        # default size
-        width, height = ImageSizer.resize(w, h)
-
-        # make sure we're at the beginning of the file (both FastImage and Nokogiri move the pointer)
-        file.rewind
-
-        # crop images depending on their type
-        if CROPPED_IMAGE_TYPES.include?(options[:image_type])
-          allow_animation = SiteSetting.allow_animated_thumbnails
-          max_pixel_ratio = Discourse::PIXEL_RATIOS.max
-
-          case options[:image_type]
-          when "avatar"
-            allow_animation = SiteSetting.allow_animated_avatars
-            width = height = Discourse.avatar_sizes.max
-            OptimizedImage.resize(file.path, file.path, width, height, filename: filename, allow_animation: allow_animation)
-          when "profile_background"
-            max_width = 850 * max_pixel_ratio
-            width, height = ImageSizer.resize(w, h, max_width: max_width, max_height: max_width)
-            OptimizedImage.downsize(file.path, file.path, "#{width}x#{height}", filename: filename, allow_animation: allow_animation)
-          when "card_background"
-            max_width = 590 * max_pixel_ratio
-            width, height = ImageSizer.resize(w, h, max_width: max_width, max_height: max_width)
-            OptimizedImage.downsize(file.path, file.path, "#{width}x#{height}", filename: filename, allow_animation: allow_animation)
-          end
-        end
-
-        # optimize image (except GIFs, SVGs and large PNGs)
-        if should_optimize?(file.path)
-          ImageOptim.new.optimize_image!(file.path) rescue nil
-          # update the file size
-          filesize = File.size(file.path)
-        end
-      end
-
-      # compute the sha of the file
-      sha1 = Upload.generate_digest(file)
-
-      # do we already have that upload?
-      upload = find_by(sha1: sha1)
-
-      # make sure the previous upload has not failed
-      if upload && (upload.url.blank? || is_dimensionless_image?(filename, upload.width, upload.height))
-        upload.destroy
-        upload = nil
-      end
-
-      # return the previous upload if any
-      return upload unless upload.nil?
-
-      # create the upload otherwise
-      upload = Upload.new
-      upload.user_id           = user_id
-      upload.original_filename = filename
-      upload.filesize          = filesize
-      upload.sha1              = sha1
-      upload.url               = ""
-      upload.width             = width
-      upload.height            = height
-      upload.origin            = options[:origin][0...1000] if options[:origin]
-
-      if options[:is_attachment_for_group_message]
-        upload.is_attachment_for_group_message = true
-      end
-
-      if is_dimensionless_image?(filename, upload.width, upload.height)
-        upload.errors.add(:base, I18n.t("upload.images.size_not_found"))
-        return upload
-      end
-
-      return upload unless upload.save
-
-      # store the file and update its url
-      File.open(file.path) do |f|
-        url = Discourse.store.store_upload(f, upload, options[:content_type])
-        if url.present?
-          upload.url = url
-          upload.save
-        else
-          upload.errors.add(:url, I18n.t("upload.store_failure", { upload_id: upload.id, user_id: user_id }))
-        end
-      end
-
-      upload
-    end
-  end
-
-  def self.is_actual_image?(file)
-    # due to ImageMagick CVE-2016–3714, use FastImage to check the magic bytes
-    # cf. https://meta.discourse.org/t/imagemagick-cve-2016-3714/43624
-    FastImage.size(file, raise_on_failure: true)
-  rescue
-    false
-  end
-
-  LARGE_PNG_SIZE ||= 3.megabytes
-
-  def self.should_optimize?(path)
-    # don't optimize GIFs or SVGs
-    return false if path =~ /\.(gif|svg)$/i
-    return true  if path !~ /\.png$/i
-    image_info = FastImage.new(path) rescue nil
-    w, h = *(image_info.try(:size) || [0, 0])
-    # don't optimize large PNGs
-    w > 0 && h > 0 && w * h < LARGE_PNG_SIZE
-  end
-
-  def self.is_dimensionless_image?(filename, width, height)
-    FileHelper.is_image?(filename) && (width.blank? || width == 0 || height.blank? || height == 0)
+  def self.extract_upload_url(url)
+    url.match(/(\/original\/\dX[\/\.\w]*\/([a-zA-Z0-9]+)[\.\w]*)/)
   end
 
   def self.get_from_url(url)
     return if url.blank?
-    # we store relative urls, so we need to remove any host/cdn
-    url = url.sub(Discourse.asset_host, "") if Discourse.asset_host.present?
-    # when using s3, we need to replace with the absolute base url
-    url = url.sub(SiteSetting.s3_cdn_url, Discourse.store.absolute_base_url) if SiteSetting.s3_cdn_url.present?
-    Upload.find_by(url: url)
+
+    uri = begin
+      URI(URI.unescape(url))
+    rescue URI::Error
+    end
+
+    return if uri&.path.blank?
+    data = extract_upload_url(uri.path)
+    return if data.blank?
+    sha1 = data[2]
+    upload = nil
+    upload = Upload.find_by(sha1: sha1) if sha1&.length == SHA1_LENGTH
+    upload || Upload.find_by("url LIKE ?", "%#{data[1]}")
   end
 
-  def self.fix_image_orientation(path)
-    `convert #{path} -auto-orient #{path}`
-  end
-
-  def self.migrate_to_new_scheme(limit=nil)
+  def self.migrate_to_new_scheme(limit = nil)
     problems = []
 
     if SiteSetting.migrate_to_new_scheme
@@ -245,7 +198,7 @@ class Upload < ActiveRecord::Base
       local_store = FileStore::LocalStore.new
 
       scope = Upload.where("url NOT LIKE '%/original/_X/%'").order(id: :desc)
-      scope.limit(limit) if limit
+      scope = scope.limit(limit) if limit
 
       scope.each do |upload|
         begin
@@ -256,7 +209,12 @@ class Upload < ActiveRecord::Base
           # download if external
           if external
             url = SiteSetting.scheme + ":" + previous_url
-            file = FileHelper.download(url, max_file_size_kb, "discourse", true) rescue nil
+            file = FileHelper.download(
+              url,
+              max_file_size: max_file_size_kb,
+              tmp_file_name: "discourse",
+              follow_redirect: true
+            ) rescue nil
             path = file.path
           else
             path = local_store.path_for(upload)
@@ -266,9 +224,7 @@ class Upload < ActiveRecord::Base
             upload.sha1 = Upload.generate_digest(path)
           end
           # optimize if image
-          if FileHelper.is_image?(File.basename(path))
-            ImageOptim.new.optimize_image!(path)
-          end
+          FileHelper.optimize_image!(path) if FileHelper.is_supported_image?(File.basename(path))
           # store to new location & update the filesize
           File.open(path) do |f|
             upload.url = Discourse.store.store_upload(f, upload)
@@ -280,13 +236,13 @@ class Upload < ActiveRecord::Base
           DbHelper.remap(previous_url, upload.url)
           # remove the old file (when local)
           unless external
-            FileUtils.rm(path, force: true) rescue nil
+            FileUtils.rm(path, force: true)
           end
         rescue => e
           problems << { upload: upload, ex: e }
         ensure
-          file.try(:unlink) rescue nil
-          file.try(:close) rescue nil
+          file&.unlink
+          file&.close
         end
       end
     end
@@ -312,9 +268,13 @@ end
 #  sha1              :string(40)
 #  origin            :string(1000)
 #  retain_hours      :integer
+#  extension         :string(10)
+#  thumbnail_width   :integer
+#  thumbnail_height  :integer
 #
 # Indexes
 #
+#  index_uploads_on_extension   (lower((extension)::text))
 #  index_uploads_on_id_and_url  (id,url)
 #  index_uploads_on_sha1        (sha1) UNIQUE
 #  index_uploads_on_url         (url)

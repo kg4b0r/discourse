@@ -38,6 +38,8 @@ startDrag = function(e, opts) {
 };
 
 performDrag = function(e, opts) {
+  $(div).trigger("div-resizing");
+
   var size, sizePx, thisMousePos;
   thisMousePos = mousePosition(e).y;
   size = originalDivHeight + (originalPos - thisMousePos);
@@ -67,6 +69,7 @@ endDrag = function(e, opts) {
   if (typeof opts.resize === "function") {
     opts.resize();
   }
+  $(div).trigger("div-resized");
   div = null;
 };
 

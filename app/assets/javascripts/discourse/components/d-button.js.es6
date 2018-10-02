@@ -1,12 +1,30 @@
-import { iconHTML } from 'discourse/helpers/fa-icon';
-import { default as computed, observes } from 'ember-addons/ember-computed-decorators';
+import { default as computed } from "ember-addons/ember-computed-decorators";
 
 export default Ember.Component.extend({
-  tagName: 'button',
-  classNameBindings: [':btn', 'noText'],
-  attributeBindings: ['disabled', 'translatedTitle:title'],
+  // subclasses need this
+  layoutName: "components/d-button",
 
-  noText: Ember.computed.empty('translatedLabel'),
+  tagName: "button",
+  classNameBindings: [":btn", "noText", "btnType"],
+  attributeBindings: [
+    "disabled",
+    "translatedTitle:title",
+    "translatedTitle:aria-label",
+    "tabindex"
+  ],
+
+  btnIcon: Ember.computed.notEmpty("icon"),
+
+  @computed("icon", "translatedLabel")
+  btnType(icon, translatedLabel) {
+    if (icon) {
+      return translatedLabel ? "btn-icon-text" : "btn-icon";
+    } else if (translatedLabel) {
+      return "btn-text";
+    }
+  },
+
+  noText: Ember.computed.empty("translatedLabel"),
 
   @computed("title")
   translatedTitle(title) {
@@ -16,24 +34,6 @@ export default Ember.Component.extend({
   @computed("label")
   translatedLabel(label) {
     if (label) return I18n.t(label);
-  },
-
-  @observes('icon')
-  iconChanged() {
-    this.rerender();
-  },
-
-  render(buffer) {
-    const label = this.get('translatedLabel'),
-          icon = this.get('icon');
-
-    if (label || icon) {
-      if (icon) { buffer.push(iconHTML(icon) + ' '); }
-      if (label) { buffer.push(label); }
-    } else {
-      // If no label or icon is present, yield
-      return this._super(buffer);
-    }
   },
 
   click() {

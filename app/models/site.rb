@@ -28,6 +28,7 @@ class Site
   def categories
     @categories ||= begin
       categories = Category
+        .includes(:uploaded_logo, :uploaded_background)
         .secured(@guardian)
         .joins('LEFT JOIN topics t on t.id = categories.topic_id')
         .select('categories.*, t.slug topic_slug')
@@ -42,9 +43,12 @@ class Site
         end
       end
 
-      allowed_topic_create_ids =
-        @guardian.anonymous? ? [] : Category.topic_create_allowed(@guardian).pluck(:id)
-      allowed_topic_create = Set.new(allowed_topic_create_ids)
+      allowed_topic_create = nil
+      unless @guardian.is_admin?
+        allowed_topic_create_ids =
+          @guardian.anonymous? ? [] : Category.topic_create_allowed(@guardian).pluck(:id)
+        allowed_topic_create = Set.new(allowed_topic_create_ids)
+      end
 
       by_id = {}
 
@@ -57,7 +61,7 @@ class Site
 
       categories.each do |category|
         category.notification_level = category_user[category.id] || regular
-        category.permission = CategoryGroup.permission_types[:full] if allowed_topic_create.include?(category.id)
+        category.permission = CategoryGroup.permission_types[:full] if allowed_topic_create&.include?(category.id) || @guardian.is_admin?
         category.has_children = with_children.include?(category.id)
         by_id[category.id] = category
       end
@@ -67,12 +71,16 @@ class Site
     end
   end
 
-  def suppressed_from_homepage_category_ids
-    categories.select { |c| c.suppress_from_homepage == true }.map(&:id)
+  def suppressed_from_latest_category_ids
+    categories.select { |c| c.suppress_from_latest == true }.map(&:id)
   end
 
   def archetypes
     Archetype.list.reject { |t| t.id == Archetype.private_message }
+  end
+
+  def auth_providers
+    Discourse.enabled_auth_providers
   end
 
   def self.json_for(guardian)
@@ -83,6 +91,9 @@ class Site
         filters: Discourse.filters.map(&:to_s),
         user_fields: UserField.all.map do |userfield|
           UserFieldSerializer.new(userfield, root: false, scope: guardian)
+        end,
+        auth_providers: Discourse.enabled_auth_providers.map do |provider|
+          AuthProviderSerializer.new(provider, root: false, scope: guardian)
         end
       }.to_json
     end
@@ -117,7 +128,7 @@ class Site
   def self.clear_anon_cache!
     # publishing forces the sequence up
     # the cache is validated based on the sequence
-    MessageBus.publish('/site_json','')
+    MessageBus.publish('/site_json', '')
   end
 
 end

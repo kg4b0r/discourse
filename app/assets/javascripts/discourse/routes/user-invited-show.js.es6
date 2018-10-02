@@ -1,12 +1,11 @@
-import Invite from 'discourse/models/invite';
+import Invite from "discourse/models/invite";
 import showModal from "discourse/lib/show-modal";
 
 export default Discourse.Route.extend({
-
   model(params) {
     const self = this;
-    Invite.findInvitedCount(self.modelFor("user")).then(function (result) {
-      self.set('invitesCount', result);
+    Invite.findInvitedCount(self.modelFor("user")).then(function(result) {
+      self.set("invitesCount", result);
     });
     self.inviteFilter = params.filter;
     return Invite.findInvitedBy(self.modelFor("user"), params.filter);
@@ -25,7 +24,7 @@ export default Discourse.Route.extend({
       filter: this.inviteFilter,
       searchTerm: "",
       totalInvites: model.invites.length,
-      invitesCount: this.get('invitesCount')
+      invitesCount: this.get("invitesCount")
     });
   },
 
@@ -33,14 +32,6 @@ export default Discourse.Route.extend({
     showInvite() {
       showModal("invite", { model: this.currentUser });
       this.controllerFor("invite").reset();
-    },
-
-    uploadSuccess(filename) {
-      bootbox.alert(I18n.t("user.invited.bulk_invite.success", { filename: filename }));
-    },
-
-    uploadError(filename, message) {
-      bootbox.alert(I18n.t("user.invited.bulk_invite.error", { filename: filename, message: message }));
     }
   }
 });

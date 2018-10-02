@@ -1,15 +1,15 @@
 class Admin::WebHooksController < Admin::AdminController
-  before_filter :fetch_web_hook, only: %i(show update destroy list_events ping)
+  before_action :fetch_web_hook, only: %i(show update destroy list_events bulk_events ping)
 
   def index
     limit = 50
     offset = params[:offset].to_i
 
     web_hooks = WebHook.limit(limit)
-                       .offset(offset)
-                       .includes(:web_hook_event_types)
-                       .includes(:categories)
-                       .includes(:groups)
+      .offset(offset)
+      .includes(:web_hook_event_types)
+      .includes(:categories)
+      .includes(:groups)
 
     json = {
       web_hooks: serialize_data(web_hooks, AdminWebHookSerializer),
@@ -63,13 +63,19 @@ class Admin::WebHooksController < Admin::AdminController
     json = {
       web_hook_events: serialize_data(@web_hook.web_hook_events.limit(limit).offset(offset), AdminWebHookEventSerializer),
       total_rows_web_hook_events: @web_hook.web_hook_events.count,
-      load_more_web_hook_events: admin_web_hook_events_path(limit: limit, offset: offset + limit, format: :json),
+      load_more_web_hook_events: web_hook_events_admin_api_index_path(limit: limit, offset: offset + limit, format: :json),
       extras: {
         web_hook_id: @web_hook.id
       }
     }
 
     render json: MultiJson.dump(json), status: 200
+  end
+
+  def bulk_events
+    params.require(:ids)
+    web_hook_events = @web_hook.web_hook_events.where(id: params[:ids])
+    render_serialized(web_hook_events, AdminWebHookEventSerializer)
   end
 
   def redeliver_event
@@ -94,7 +100,7 @@ class Admin::WebHooksController < Admin::AdminController
   end
 
   def ping
-    Jobs.enqueue(:emit_web_hook_event, web_hook_id: @web_hook.id, event_type: 'ping')
+    Jobs.enqueue(:emit_web_hook_event, web_hook_id: @web_hook.id, event_type: 'ping', event_name: 'ping')
     render json: success_json
   end
 

@@ -15,25 +15,33 @@ SMTP_CLIENT_ERRORS = [Net::SMTPFatalError, Net::SMTPSyntaxError]
 module Email
   class Sender
 
-    def initialize(message, email_type, user=nil)
+    def initialize(message, email_type, user = nil)
       @message =  message
       @email_type = email_type
       @user = user
     end
 
     def send
-      return if SiteSetting.disable_emails && @email_type.to_s != "admin_login"
+      return if SiteSetting.disable_emails == "yes" && @email_type.to_s != "admin_login"
 
       return if ActionMailer::Base::NullMail === @message
       return if ActionMailer::Base::NullMail === (@message.message rescue nil)
 
-      return skip(I18n.t('email_log.message_blank'))    if @message.blank?
-      return skip(I18n.t('email_log.message_to_blank')) if @message.to.blank?
+      return skip(SkippedEmailLog.reason_types[:sender_message_blank])    if @message.blank?
+      return skip(SkippedEmailLog.reason_types[:sender_message_to_blank]) if @message.to.blank?
+
+      if SiteSetting.disable_emails == "non-staff"
+        return unless User.find_by_email(to_address)&.staff?
+      end
 
       if @message.text_part
-        return skip(I18n.t('email_log.text_part_body_blank')) if @message.text_part.body.to_s.blank?
+        if @message.text_part.body.to_s.blank?
+          return skip(SkippedEmailLog.reason_types[:sender_text_part_body_blank])
+        end
       else
-        return skip(I18n.t('email_log.body_blank')) if @message.body.to_s.blank?
+        if @message.body.to_s.blank?
+          return skip(SkippedEmailLog.reason_types[:sender_body_blank])
+        end
       end
 
       @message.charset = 'UTF-8'
@@ -51,64 +59,98 @@ module Email
         end
       end
 
-      @message.parts[0].body = @message.parts[0].body.to_s.gsub(/\[\/?email-indent\]/, '')
-
       # Fix relative (ie upload) HTML links in markdown which do not work well in plain text emails.
       # These are the links we add when a user uploads a file or image.
       # Ideally we would parse general markdown into plain text, but that is almost an intractable problem.
       url_prefix = Discourse.base_url
-      @message.parts[0].body = @message.parts[0].body.to_s.gsub(/<a class="attachment" href="(\/uploads\/default\/[^"]+)">([^<]*)<\/a>/, '[\2]('+url_prefix+'\1)')
-      @message.parts[0].body = @message.parts[0].body.to_s.gsub(/<img src="(\/uploads\/default\/[^"]+)"([^>]*)>/, '![]('+url_prefix+'\1)')
+      @message.parts[0].body = @message.parts[0].body.to_s.gsub(/<a class="attachment" href="(\/uploads\/default\/[^"]+)">([^<]*)<\/a>/, '[\2](' + url_prefix + '\1)')
+      @message.parts[0].body = @message.parts[0].body.to_s.gsub(/<img src="(\/uploads\/default\/[^"]+)"([^>]*)>/, '![](' + url_prefix + '\1)')
 
       @message.text_part.content_type = 'text/plain; charset=UTF-8'
+      user_id = @user&.id
 
       # Set up the email log
-      email_log = EmailLog.new(email_type: @email_type, to_address: to_address, user_id: @user.try(:id))
+      email_log = EmailLog.new(
+        email_type: @email_type,
+        to_address: to_address,
+        user_id: user_id
+      )
 
       host = Email::Sender.host_for(Discourse.base_url)
 
-      topic_id = header_value('X-Discourse-Topic-Id')
-      post_id = header_value('X-Discourse-Post-Id')
-      reply_key = header_value('X-Discourse-Reply-Key')
+      post_id   = header_value('X-Discourse-Post-Id')
+      topic_id  = header_value('X-Discourse-Topic-Id')
+      reply_key = set_reply_key(post_id, user_id)
 
       # always set a default Message ID from the host
-      uuid = SecureRandom.uuid
-      @message.header['Message-ID'] = "<#{uuid}@#{host}>"
+      @message.header['Message-ID'] = "<#{SecureRandom.uuid}@#{host}>"
 
-      if topic_id.present?
-        email_log.topic_id = topic_id
+      if topic_id.present? && post_id.present?
+        post = Post.find_by(id: post_id, topic_id: topic_id)
 
-        incoming_email = IncomingEmail.find_by(post_id: post_id, topic_id: topic_id)
+        # guards against deleted posts
+        return skip(SkippedEmailLog.reason_types[:sender_post_deleted]) unless post
 
-        incoming_message_id = nil
-        incoming_message_id = "<#{incoming_email.message_id}>" if incoming_email.try(:message_id).present?
+        topic = post.topic
+        first_post = topic.ordered_posts.first
 
-        topic_identifier = "<topic/#{topic_id}@#{host}>"
-        post_identifier = "<topic/#{topic_id}/#{post_id}@#{host}>"
+        topic_message_id = first_post.incoming_email&.message_id.present? ?
+          "<#{first_post.incoming_email.message_id}>" :
+          "<topic/#{topic_id}@#{host}>"
 
-        @message.header['Message-ID'] = post_identifier
-        @message.header['In-Reply-To'] = incoming_message_id || topic_identifier
-        @message.header['References'] = topic_identifier
+        post_message_id = post.incoming_email&.message_id.present? ?
+          "<#{post.incoming_email.message_id}>" :
+          "<topic/#{topic_id}/#{post_id}@#{host}>"
 
-        topic = Topic.where(id: topic_id).first
+        referenced_posts = Post.includes(:incoming_email)
+          .where(id: PostReply.where(reply_id: post_id).select(:post_id))
+          .order(id: :desc)
 
-        # http://www.ietf.org/rfc/rfc2919.txt
-        if topic && topic.category && !topic.category.uncategorized?
-          list_id = "<#{topic.category.name.downcase.tr(' ', '-')}.#{host}>"
+        referenced_post_message_ids = referenced_posts.map do |referenced_post|
+          if referenced_post.incoming_email&.message_id.present?
+            "<#{referenced_post.incoming_email.message_id}>"
+          else
+            if referenced_post.post_number == 1
+              "<topic/#{topic_id}@#{host}>"
+            else
+              "<topic/#{topic_id}/#{referenced_post.id}@#{host}>"
+            end
+          end
+        end
+
+        # https://www.ietf.org/rfc/rfc2822.txt
+        if post.post_number == 1
+          @message.header['Message-ID']  = topic_message_id
+        else
+          @message.header['Message-ID']  = post_message_id
+          @message.header['In-Reply-To'] = referenced_post_message_ids[0] || topic_message_id
+          @message.header['References']  = [topic_message_id, referenced_post_message_ids].flatten.compact.uniq
+        end
+
+        # https://www.ietf.org/rfc/rfc2919.txt
+        if topic&.category && !topic.category.uncategorized?
+          list_id = "#{SiteSetting.title} | #{topic.category.name} <#{topic.category.name.downcase.tr(' ', '-')}.#{host}>"
 
           # subcategory case
           if !topic.category.parent_category_id.nil?
             parent_category_name = Category.find_by(id: topic.category.parent_category_id).name
-            list_id = "<#{topic.category.name.downcase.tr(' ', '-')}.#{parent_category_name.downcase.tr(' ', '-')}.#{host}>"
+            list_id = "#{SiteSetting.title} | #{parent_category_name} #{topic.category.name} <#{topic.category.name.downcase.tr(' ', '-')}.#{parent_category_name.downcase.tr(' ', '-')}.#{host}>"
           end
         else
-          list_id = "<#{host}>"
+          list_id = "#{SiteSetting.title} <#{host}>"
         end
 
-        # http://www.ietf.org/rfc/rfc3834.txt
-        @message.header['Precedence']   = 'list'
-        @message.header['List-ID']      = list_id
-        @message.header['List-Archive'] = topic.url if topic
+        # https://www.ietf.org/rfc/rfc3834.txt
+        @message.header['Precedence'] = 'list'
+        @message.header['List-ID']    = list_id
+
+        if topic
+          if SiteSetting.private_email?
+            @message.header['List-Archive'] = "#{Discourse.base_url}#{topic.slugless_url}"
+          else
+            @message.header['List-Archive'] = topic.url
+          end
+        end
       end
 
       if reply_key.present? && @message.header['Reply-To'] =~ /\<([^\>]+)\>/
@@ -126,19 +168,23 @@ module Email
       end
 
       email_log.post_id = post_id if post_id.present?
-      email_log.reply_key = reply_key if reply_key.present?
 
       # Remove headers we don't need anymore
-      @message.header['X-Discourse-Topic-Id']  = nil if topic_id.present?
-      @message.header['X-Discourse-Post-Id']   = nil if post_id.present?
-      @message.header['X-Discourse-Reply-Key'] = nil if reply_key.present?
+      @message.header['X-Discourse-Topic-Id'] = nil if topic_id.present?
+      @message.header['X-Discourse-Post-Id']  = nil if post_id.present?
 
-      # pass the original message_id when using mailjet/mandrill
+      if reply_key.present?
+        @message.header[Email::MessageBuilder::ALLOW_REPLY_BY_EMAIL_HEADER] = nil
+      end
+
+      # pass the original message_id when using mailjet/mandrill/sparkpost
       case ActionMailer::Base.smtp_settings[:address]
       when /\.mailjet\.com/
         @message.header['X-MJ-CustomID'] = @message.message_id
       when "smtp.mandrillapp.com"
-        @message.header['X-MC-Metadata'] = { message_id: @message.message_id }.to_json
+        merge_json_x_header('X-MC-Metadata', message_id: @message.message_id)
+      when "smtp.sparkpostmail.com"
+        merge_json_x_header('X-MSYS-API', metadata: { message_id: @message.message_id })
       end
 
       # Suppress images from short emails
@@ -154,10 +200,9 @@ module Email
       begin
         @message.deliver_now
       rescue *SMTP_CLIENT_ERRORS => e
-        return skip(e.message)
+        return skip(SkippedEmailLog.reason_types[:custom], custom_reason: e.message)
       end
 
-      # Save and return the email log
       email_log.save!
       email_log
     end
@@ -176,7 +221,7 @@ module Email
         begin
           uri = URI.parse(base_url)
           host = uri.host.downcase if uri.host.present?
-        rescue URI::InvalidURIError
+        rescue URI::Error
         end
       end
       host
@@ -190,14 +235,44 @@ module Email
       header.value
     end
 
-    def skip(reason)
-      EmailLog.create!(
+    def skip(reason_type, custom_reason: nil)
+      attributes = {
         email_type: @email_type,
         to_address: to_address,
-        user_id: @user.try(:id),
-        skipped: true,
-        skipped_reason: "[Sender] #{reason}"
-      )
+        user_id: @user&.id,
+        reason_type: reason_type
+      }
+
+      attributes[:custom_reason] = custom_reason if custom_reason
+      SkippedEmailLog.create!(attributes)
+    end
+
+    def merge_json_x_header(name, value)
+      data   = JSON.parse(@message.header[name].to_s) rescue nil
+      data ||= {}
+      data.merge!(value)
+      # /!\ @message.header is not a standard ruby hash.
+      # It can have multiple values attached to the same key...
+      # In order to remove all the previous keys, we have to "nil" it.
+      # But for "nil" to work, there must already be a key...
+      @message.header[name] = ""
+      @message.header[name] = nil
+      @message.header[name] = data.to_json
+    end
+
+    def set_reply_key(post_id, user_id)
+      return unless user_id &&
+        post_id &&
+        header_value(Email::MessageBuilder::ALLOW_REPLY_BY_EMAIL_HEADER).present?
+
+      # use safe variant here cause we tend to see concurrency issue
+      reply_key = PostReplyKey.find_or_create_by_safe!(
+        post_id: post_id,
+        user_id: user_id
+      ).reply_key
+
+      @message.header['Reply-To'] =
+        header_value('Reply-To').gsub!("%{reply_key}", reply_key)
     end
 
   end

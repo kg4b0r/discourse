@@ -54,16 +54,30 @@ describe UserProfile do
       expect(user_profile).not_to be_valid
     end
 
-    it "doesn't support invalid website" do
-      user_profile = Fabricate.build(:user_profile, website: "http://https://google.com")
-      user_profile.user = Fabricate.build(:user)
-      expect(user_profile).not_to be_valid
-    end
+    context "website validation" do
+      let(:user_profile) { Fabricate.build(:user_profile, user: Fabricate(:user)) }
 
-    it "supports valid website" do
-      user_profile = Fabricate.build(:user_profile, website: "https://google.com")
-      user_profile.user = Fabricate.build(:user)
-      expect(user_profile.valid?).to be true
+      it "should not allow invalid URLs" do
+        user_profile.website = "http://https://google.com"
+        expect(user_profile).to_not be_valid
+      end
+
+      it "validates website domain if user_website_domains_whitelist setting is present" do
+        SiteSetting.user_website_domains_whitelist = "discourse.org"
+
+        user_profile.website = "https://google.com"
+        expect(user_profile).not_to be_valid
+
+        user_profile.website = "http://discourse.org"
+        expect(user_profile).to be_valid
+      end
+
+      it "doesn't blow up with an invalid URI" do
+        SiteSetting.user_website_domains_whitelist = "discourse.org"
+
+        user_profile.website = 'user - https://forum.example.com/user'
+        expect { user_profile.save! }.to raise_error(ActiveRecord::RecordInvalid)
+      end
     end
 
     describe 'after save' do
@@ -98,6 +112,24 @@ describe UserProfile do
     end
   end
 
+  describe 'bio excerpt emojis' do
+    let(:user) { Fabricate(:user) }
+    let(:upload) { Fabricate(:upload) }
+
+    before do
+      CustomEmoji.create!(name: 'test', upload: upload)
+      Emoji.clear_cache
+
+      user.user_profile.update!(
+        bio_raw: "hello :test: :woman_scientist:t5: 🤔"
+      )
+    end
+
+    it 'supports emoji images' do
+      expect(user.user_profile.bio_excerpt(500, keep_emoji_images: true)).to eq("hello <img src=\"#{upload.url}?v=#{Emoji::EMOJI_VERSION}\" title=\":test:\" class=\"emoji emoji-custom\" alt=\":test:\"> <img src=\"/images/emoji/twitter/woman_scientist/5.png?v=#{Emoji::EMOJI_VERSION}\" title=\":woman_scientist:t5:\" class=\"emoji\" alt=\":woman_scientist:t5:\"> <img src=\"/images/emoji/twitter/thinking.png?v=#{Emoji::EMOJI_VERSION}\" title=\":thinking:\" class=\"emoji\" alt=\":thinking:\">")
+    end
+  end
+
   describe 'bio link stripping' do
 
     it 'returns an empty string with no bio' do
@@ -121,8 +153,8 @@ describe UserProfile do
 
       it 'includes the link as nofollow if the user is not new' do
         user.user_profile.send(:cook)
-        expect(user_profile.bio_excerpt).to match_html("I love <a href='http://discourse.org' rel='nofollow'>http://discourse.org</a>")
-        expect(user_profile.bio_processed).to match_html("<p>I love <a href=\"http://discourse.org\" rel=\"nofollow\">http://discourse.org</a></p>")
+        expect(user_profile.bio_excerpt).to match_html("I love <a href='http://discourse.org' rel='nofollow noopener'>http://discourse.org</a>")
+        expect(user_profile.bio_processed).to match_html("<p>I love <a href=\"http://discourse.org\" rel=\"nofollow noopener\">http://discourse.org</a></p>")
       end
 
       it 'removes the link if the user is new' do
@@ -140,7 +172,7 @@ describe UserProfile do
       end
 
       context 'tl3_links_no_follow is false' do
-        before { SiteSetting.stubs(:tl3_links_no_follow).returns(false) }
+        before { SiteSetting.tl3_links_no_follow = false }
 
         it 'includes the link without nofollow if the user is trust level 3 or higher' do
           user.trust_level = TrustLevel[3]
@@ -160,21 +192,56 @@ describe UserProfile do
           created_user.save
           created_user.reload
           created_user.change_trust_level!(TrustLevel[2])
-          expect(created_user.user_profile.bio_excerpt).to match_html("I love <a href='http://discourse.org' rel='nofollow'>http://discourse.org</a>")
-          expect(created_user.user_profile.bio_processed).to match_html("<p>I love <a href=\"http://discourse.org\" rel=\"nofollow\">http://discourse.org</a></p>")
+          expect(created_user.user_profile.bio_excerpt).to match_html("I love <a href='http://discourse.org' rel='nofollow noopener'>http://discourse.org</a>")
+          expect(created_user.user_profile.bio_processed).to match_html("<p>I love <a href=\"http://discourse.org\" rel=\"nofollow noopener\">http://discourse.org</a></p>")
         end
       end
 
       context 'tl3_links_no_follow is true' do
-        before { SiteSetting.stubs(:tl3_links_no_follow).returns(true) }
+        before { SiteSetting.tl3_links_no_follow = true }
 
         it 'includes the link with nofollow if the user is trust level 3 or higher' do
           user.trust_level = TrustLevel[3]
           user_profile.send(:cook)
-          expect(user_profile.bio_excerpt).to match_html("I love <a href='http://discourse.org' rel='nofollow'>http://discourse.org</a>")
-          expect(user_profile.bio_processed).to match_html("<p>I love <a href=\"http://discourse.org\" rel=\"nofollow\">http://discourse.org</a></p>")
+          expect(user_profile.bio_excerpt).to match_html("I love <a href='http://discourse.org' rel='nofollow noopener'>http://discourse.org</a>")
+          expect(user_profile.bio_processed).to match_html("<p>I love <a href=\"http://discourse.org\" rel=\"nofollow noopener\">http://discourse.org</a></p>")
         end
       end
     end
   end
+
+  context '.import_url_for_user' do
+    let(:user) { Fabricate(:user) }
+
+    before do
+      stub_request(:any, "thisfakesomething.something.com")
+        .to_return(body: "abc", status: 404, headers: { 'Content-Length' => 3 })
+    end
+
+    describe 'when profile_background_url returns an invalid status code' do
+      it 'should not do anything' do
+        url = "http://thisfakesomething.something.com/"
+
+        UserProfile.import_url_for_user(url, user, is_card_background: false)
+
+        user.reload
+
+        expect(user.user_profile.profile_background).to eq(nil)
+      end
+    end
+
+    describe 'when card_background_url returns an invalid status code' do
+      it 'should not do anything' do
+        url = "http://thisfakesomething.something.com/"
+
+        UserProfile.import_url_for_user(url, user, is_card_background: true)
+
+        user.reload
+
+        expect(user.user_profile.card_background).to eq(nil)
+      end
+    end
+
+  end
+
 end

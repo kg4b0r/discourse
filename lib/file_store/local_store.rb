@@ -17,6 +17,7 @@ module FileStore
       dir = Pathname.new(destination).dirname
       FileUtils.mkdir_p(dir) unless Dir.exists?(dir)
       FileUtils.move(source, destination, force: true)
+      FileUtils.touch(destination)
     end
 
     def has_been_uploaded?(url)
@@ -59,7 +60,11 @@ module FileStore
     end
 
     def purge_tombstone(grace_period)
-      `find #{tombstone_dir} -mtime +#{grace_period} -type f -delete`
+      if Dir.exists?(Discourse.store.tombstone_dir)
+        Discourse::Utils.execute_command(
+          'find', tombstone_dir, '-mtime', "+#{grace_period}", '-type', 'f', '-delete'
+        )
+      end
     end
 
     def get_path_for(type, upload_id, sha, extension)

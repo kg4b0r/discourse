@@ -1,5 +1,5 @@
 //= require logster
-//= require ./env
+//= require ./discourse-objects
 //= require probes.js
 
 //= require template_include.js
@@ -14,11 +14,10 @@
 //= require bootstrap-dropdown.js
 //= require bootstrap-modal.js
 //= require bootstrap-transition.js
-//= require select2.js
 //= require div_resizer
 //= require caret_position
 //= require favcount.js
-//= require jquery.ba-resize.min.js
+//= require jquery.ba-resize.js
 //= require jquery.color.js
 //= require jquery.cookie.js
 //= require jquery.fileupload.js
@@ -33,8 +32,8 @@
 //= require show-html.js
 //= require break_string
 //= require buffered-proxy
-//= require jquery.autoellipsis-1.0.10.min.js
+//= require jquery.autoellipsis-1.0.10
 //= require virtual-dom
 //= require virtual-dom-amd
 //= require highlight.js
-//= require_tree ./discourse/ember
+//= require htmlparser.js

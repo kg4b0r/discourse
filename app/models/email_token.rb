@@ -11,8 +11,8 @@ class EmailToken < ActiveRecord::Base
   after_create do
     # Expire the previous tokens
     EmailToken.where(user_id: self.user_id)
-              .where("id != ?", self.id)
-              .update_all(expired: true)
+      .where("id != ?", self.id)
+      .update_all(expired: true)
   end
 
   def self.token_length
@@ -21,10 +21,6 @@ class EmailToken < ActiveRecord::Base
 
   def self.valid_after
     SiteSetting.email_token_valid_hours.hours.ago
-  end
-
-  def self.confirm_valid_after
-    SiteSetting.email_token_grace_period_hours.hours.ago
   end
 
   def self.unconfirmed
@@ -40,7 +36,7 @@ class EmailToken < ActiveRecord::Base
   end
 
   def self.valid_token_format?(token)
-    token.present? && token =~ /\h{#{token.length/2}}/i
+    token.present? && token =~ /\h{#{token.length / 2}}/i
   end
 
   def self.atomic_confirm(token)
@@ -52,7 +48,7 @@ class EmailToken < ActiveRecord::Base
 
     user = email_token.user
     failure[:user] = user
-    row_count = EmailToken.where(id: email_token.id, expired: false).update_all 'confirmed = true'
+    row_count = EmailToken.where(confirmed: false, id: email_token.id, expired: false).update_all 'confirmed = true'
 
     if row_count == 1
       { success: true, user: user, email_token: email_token }
@@ -68,14 +64,14 @@ class EmailToken < ActiveRecord::Base
       if result[:success]
         # If we are activating the user, send the welcome message
         user.send_welcome_message = !user.active?
-
         user.active = true
         user.email = result[:email_token].email
         user.save!
+        user.set_automatic_groups
       end
 
       if user
-        return User.find_by(email: Email.downcase(user.email)) if Invite.redeem_from_email(user.email).present?
+        return User.find_by_email(user.email) if Invite.redeem_from_email(user.email).present?
         user
       end
     end
@@ -85,10 +81,10 @@ class EmailToken < ActiveRecord::Base
 
   def self.confirmable(token)
     EmailToken.where(token: token)
-              .where(expired: false)
-              .where("(NOT confirmed AND created_at >= ?) OR (confirmed AND created_at >= ?)", EmailToken.valid_after, EmailToken.confirm_valid_after)
-              .includes(:user)
-              .first
+      .where(expired: false, confirmed: false)
+      .where("created_at >= ?", EmailToken.valid_after)
+      .includes(:user)
+      .first
   end
 end
 

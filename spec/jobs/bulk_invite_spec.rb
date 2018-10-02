@@ -5,26 +5,20 @@ describe Jobs::BulkInvite do
   context '.execute' do
 
     it 'raises an error when the filename is missing' do
-      expect { Jobs::BulkInvite.new.execute(identifier: '46-discoursecsv', chunks: '1') }.to raise_error(Discourse::InvalidParameters)
-    end
-
-    it 'raises an error when the identifier is missing' do
-      expect { Jobs::BulkInvite.new.execute(filename: 'discourse.csv', chunks: '1') }.to raise_error(Discourse::InvalidParameters)
-    end
-
-    it 'raises an error when the chunks is missing' do
-      expect { Jobs::BulkInvite.new.execute(filename: 'discourse.csv', identifier: '46-discoursecsv') }.to raise_error(Discourse::InvalidParameters)
+      user = Fabricate(:user)
+      expect { Jobs::BulkInvite.new.execute(current_user_id: user.id) }.to raise_error(Discourse::InvalidParameters)
     end
 
     context '.read_csv_file' do
       let(:user) { Fabricate(:user) }
       let(:bulk_invite) { Jobs::BulkInvite.new }
-      let(:csv_file) { File.new("#{Rails.root}/spec/fixtures/csv/discourse.csv") }
+      let(:csv_file) { "#{Rails.root}/spec/fixtures/csv/discourse.csv" }
 
       it 'reads csv file' do
         bulk_invite.current_user = user
         bulk_invite.read_csv_file(csv_file)
         expect(Invite.where(email: "robin@outlook.com").exists?).to eq(true)
+        expect(Invite.where(email: "jeff@gmail.com").exists?).to eq(true) # handles BOM
       end
     end
 

@@ -29,11 +29,19 @@ module Jobs
 
     def poll_pop3
       pop3 = Net::POP3.new(SiteSetting.pop3_polling_host, SiteSetting.pop3_polling_port)
-      pop3.enable_ssl if SiteSetting.pop3_polling_ssl
+
+      if SiteSetting.pop3_polling_ssl
+        if SiteSetting.pop3_polling_openssl_verify
+          pop3.enable_ssl
+        else
+          pop3.enable_ssl(OpenSSL::SSL::VERIFY_NONE)
+        end
+      end
 
       pop3.start(SiteSetting.pop3_polling_username, SiteSetting.pop3_polling_password) do |pop|
-        pop.delete_all do |p|
+        pop.each_mail do |p|
           process_popmail(p)
+          p.delete if SiteSetting.pop3_polling_delete_from_server?
         end
       end
     rescue Net::OpenTimeout => e

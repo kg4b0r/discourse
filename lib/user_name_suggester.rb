@@ -21,10 +21,14 @@ module UserNameSuggester
     name = fix_username(name)
     i = 1
     attempt = name
-    until attempt == allow_username || User.username_available?(attempt)
+    until attempt == allow_username || User.username_available?(attempt) || i > 100
       suffix = i.to_s
       max_length = User.username_length.end - suffix.length - 1
       attempt = "#{name[0..max_length]}#{suffix}"
+      i += 1
+    end
+    until attempt == allow_username || User.username_available?(attempt) || i > 200
+      attempt = SecureRandom.hex[1..SiteSetting.max_username_length]
       i += 1
     end
     attempt
@@ -35,7 +39,7 @@ module UserNameSuggester
   end
 
   def self.sanitize_username(name)
-    name = ActiveSupport::Inflector.transliterate(name)
+    name = ActiveSupport::Inflector.transliterate(name.to_s)
     # 1. replace characters that aren't allowed with '_'
     name.gsub!(UsernameValidator::CONFUSING_EXTENSIONS, "_")
     name.gsub!(/[^\w.-]/, "_")

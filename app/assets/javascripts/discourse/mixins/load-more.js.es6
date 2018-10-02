@@ -1,12 +1,11 @@
-import Eyeline from 'discourse/lib/eyeline';
-import Scrolling from 'discourse/mixins/scrolling';
-import { on } from 'ember-addons/ember-computed-decorators';
+import Eyeline from "discourse/lib/eyeline";
+import Scrolling from "discourse/mixins/scrolling";
+import { on } from "ember-addons/ember-computed-decorators";
 
 // Provides the ability to load more items for a view which is scrolled to the bottom.
-export default Ember.Mixin.create(Ember.ViewTargetActionSupport, Scrolling, {
-
+export default Ember.Mixin.create(Scrolling, {
   scrolled() {
-    const eyeline = this.get('eyeline');
+    const eyeline = this.get("eyeline");
     return eyeline && eyeline.update();
   },
 
@@ -18,9 +17,9 @@ export default Ember.Mixin.create(Ember.ViewTargetActionSupport, Scrolling, {
 
   @on("didInsertElement")
   _bindEyeline() {
-    const eyeline = new Eyeline(this.get('eyelineSelector') + ":last");
-    this.set('eyeline', eyeline);
-    eyeline.on('sawBottom', () => this.send('loadMore'));
+    const eyeline = new Eyeline(this.get("eyelineSelector") + ":last");
+    this.set("eyeline", eyeline);
+    eyeline.on("sawBottom", () => this.send("loadMore"));
     this.bindScrolling();
   },
 
@@ -28,5 +27,4 @@ export default Ember.Mixin.create(Ember.ViewTargetActionSupport, Scrolling, {
   _removeEyeline() {
     this.unbindScrolling();
   }
-
 });

@@ -1,10 +1,21 @@
 class EmbedController < ApplicationController
-  skip_before_filter :check_xhr, :preload_json, :verify_authenticity_token
+  skip_before_action :check_xhr, :preload_json, :verify_authenticity_token
 
-  before_filter :ensure_embeddable, except: [ :info ]
-  before_filter :ensure_api_request, only: [ :info ]
+  before_action :ensure_embeddable, except: [ :info ]
+  before_action :get_embeddable_css_class, except: [ :info ]
+  before_action :ensure_api_request, only: [ :info ]
 
   layout 'embed'
+
+  rescue_from Discourse::InvalidAccess do
+    response.headers['X-Frame-Options'] = "ALLOWALL"
+    if current_user.try(:admin?)
+      @setup_url = "#{Discourse.base_url}/admin/customize/embedding"
+      @show_reason = true
+      @hosts = EmbeddableHost.all
+    end
+    render 'embed_error'
+  end
 
   def comments
     embed_url = params[:embed_url]
@@ -35,7 +46,6 @@ class EmbedController < ApplicationController
         @reply_count = @topic_view.topic.posts_count - 1
         @reply_count = 0 if @reply_count < 0
       end
-
     elsif embed_url.present?
       Jobs.enqueue(:retrieve_topic,
                       user_id: current_user.try(:id),
@@ -63,7 +73,7 @@ class EmbedController < ApplicationController
     by_url = {}
 
     if embed_urls.present?
-      urls = embed_urls.map {|u| u.sub(/#discourse-comments$/, '').sub(/\/$/, '') }
+      urls = embed_urls.map { |u| u.sub(/#discourse-comments$/, '').sub(/\/$/, '') }
       topic_embeds = TopicEmbed.where(embed_url: urls).includes(:topic).references(:topic)
 
       topic_embeds.each do |te|
@@ -77,25 +87,33 @@ class EmbedController < ApplicationController
       end
     end
 
-    render json: {counts: by_url}, callback: params[:callback]
+    render json: { counts: by_url }, callback: params[:callback]
   end
 
   private
 
-    def ensure_api_request
-      raise Discourse::InvalidAccess.new('api key not set') if !is_api?
-    end
+  def get_embeddable_css_class
+    @embeddable_css_class = ""
+    embeddable_host = EmbeddableHost.record_for_url(request.referer)
+    @embeddable_css_class = " class=\"#{embeddable_host.class_name}\"" if embeddable_host.present? && embeddable_host.class_name.present?
+  end
 
-    def ensure_embeddable
+  def ensure_api_request
+    raise Discourse::InvalidAccess.new('api key not set') if !is_api?
+  end
 
-      if !(Rails.env.development? && current_user.try(:admin?))
-        raise Discourse::InvalidAccess.new('invalid referer host') unless EmbeddableHost.url_allowed?(request.referer)
+  def ensure_embeddable
+    if !(Rails.env.development? && current_user&.admin?)
+      referer = request.referer
+
+      unless referer && EmbeddableHost.url_allowed?(referer)
+        raise Discourse::InvalidAccess.new('invalid referer host')
       end
-
-      response.headers['X-Frame-Options'] = "ALLOWALL"
-    rescue URI::InvalidURIError
-      raise Discourse::InvalidAccess.new('invalid referer host')
     end
 
+    response.headers['X-Frame-Options'] = "ALLOWALL"
+  rescue URI::Error
+    raise Discourse::InvalidAccess.new('invalid referer host')
+  end
 
 end

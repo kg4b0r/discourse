@@ -1,13 +1,19 @@
-import buildStaticRoute from 'discourse/routes/build-static-route';
+import { defaultHomepage } from "discourse/lib/utilities";
+import buildStaticRoute from "discourse/routes/build-static-route";
 
-const ForgotPasswordRoute = buildStaticRoute('password-reset');
+const ForgotPasswordRoute = buildStaticRoute("password-reset");
 
 ForgotPasswordRoute.reopen({
   beforeModel() {
-    this.replaceWith(this.controllerFor('application').get('loginRequired') ? 'login' : 'discovery').then(e => {
-      Ember.run.next(() => e.send('showForgotPassword'));
+    const loginRequired = this.controllerFor("application").get(
+      "loginRequired"
+    );
+    this.replaceWith(
+      loginRequired ? "login" : `discovery.${defaultHomepage()}`
+    ).then(e => {
+      Ember.run.next(() => e.send("showForgotPassword"));
     });
-  },
+  }
 });
 
 export default ForgotPasswordRoute;

@@ -29,15 +29,20 @@ class UserUpdater
     :digest_after_minutes,
     :new_topic_duration_minutes,
     :auto_track_topics_after_msecs,
+    :notification_level_when_replying,
     :email_previous_replies,
     :email_in_reply_to,
     :like_notification_frequency,
-    :include_tl0_in_digests
+    :include_tl0_in_digests,
+    :theme_ids,
+    :allow_private_messages,
+    :homepage_id,
   ]
 
   def initialize(actor, user)
     @user = user
     @guardian = Guardian.new(actor)
+    @actor = actor
   end
 
   def update(attributes = {})
@@ -51,11 +56,16 @@ class UserUpdater
     user_profile.profile_background = attributes.fetch(:profile_background) { user_profile.profile_background }
     user_profile.card_background = attributes.fetch(:card_background) { user_profile.card_background }
 
+    old_user_name = user.name.present? ? user.name : ""
     user.name = attributes.fetch(:name) { user.name }
-    user.locale = attributes.fetch(:locale) { user.locale }
 
-    if guardian.can_grant_title?(user)
-      user.title = attributes.fetch(:title) { user.title }
+    user.locale = attributes.fetch(:locale) { user.locale }
+    user.date_of_birth = attributes.fetch(:date_of_birth) { user.date_of_birth }
+
+    if attributes[:title] &&
+      attributes[:title] != user.title &&
+      guardian.can_grant_title?(user, attributes[:title])
+      user.title = attributes[:title]
     end
 
     CATEGORY_IDS.each do |attribute, level|
@@ -65,17 +75,30 @@ class UserUpdater
     end
 
     TAG_NAMES.each do |attribute, level|
-      TagUser.batch_set(user, level, attributes[attribute])
+      if attributes.has_key?(attribute)
+        TagUser.batch_set(user, level, attributes[attribute]&.split(',') || [])
+      end
     end
 
-
     save_options = false
+
+    # special handling for theme_id cause we need to bump a sequence number
+    if attributes.key?(:theme_ids)
+      user_guardian = Guardian.new(user)
+      attributes[:theme_ids].reject!(&:blank?)
+      attributes[:theme_ids].map!(&:to_i)
+      if user_guardian.allow_themes?(attributes[:theme_ids])
+        user.user_option.theme_key_seq += 1 if user.user_option.theme_ids != attributes[:theme_ids]
+      else
+        attributes.delete(:theme_ids)
+      end
+    end
 
     OPTION_ATTR.each do |attribute|
       if attributes.key?(attribute)
         save_options = true
 
-        if [true,false].include?(user.user_option.send(attribute))
+        if [true, false].include?(user.user_option.send(attribute))
           val = attributes[attribute].to_s == 'true'
           user.user_option.send("#{attribute}=", val)
         else
@@ -84,18 +107,35 @@ class UserUpdater
       end
     end
 
+    # automatically disable digests when mailing_list_mode is enabled
+    user.user_option.email_digests = false if user.user_option.mailing_list_mode
+
     fields = attributes[:custom_fields]
     if fields.present?
       user.custom_fields = user.custom_fields.merge(fields)
     end
+
+    saved = nil
 
     User.transaction do
       if attributes.key?(:muted_usernames)
         update_muted_users(attributes[:muted_usernames])
       end
 
-      (!save_options || user.user_option.save) && user_profile.save && user.save
+      if (saved = (!save_options || user.user_option.save) && user_profile.save && user.save) &&
+         (attributes[:name].present? && old_user_name.casecmp(attributes.fetch(:name)) != 0) ||
+         (attributes[:name].blank? && old_user_name.present?)
+
+        StaffActionLogger.new(@actor).log_name_change(
+          user.id,
+          old_user_name,
+          attributes.fetch(:name) { '' }
+        )
+      end
     end
+
+    DiscourseEvent.trigger(:user_updated, user) if saved
+    saved
   end
 
   def update_muted_users(usernames)
@@ -107,17 +147,18 @@ class UserUpdater
       MutedUser.where('user_id = ? AND muted_user_id not in (?)', user.id, desired_ids).destroy_all
 
       # SQL is easier here than figuring out how to do the same in AR
-      MutedUser.exec_sql("INSERT into muted_users(user_id, muted_user_id, created_at, updated_at)
-                          SELECT :user_id, id, :now, :now
-                          FROM users
-                          WHERE
-                            id in (:desired_ids) AND
-                            id NOT IN (
-                              SELECT muted_user_id
-                              FROM muted_users
-                              WHERE user_id = :user_id
-                            )",
-                          now: Time.now, user_id: user.id, desired_ids: desired_ids)
+      DB.exec(<<~SQL, now: Time.now, user_id: user.id, desired_ids: desired_ids)
+        INSERT into muted_users(user_id, muted_user_id, created_at, updated_at)
+        SELECT :user_id, id, :now, :now
+        FROM users
+        WHERE
+          id in (:desired_ids) AND
+          id NOT IN (
+            SELECT muted_user_id
+            FROM muted_users
+            WHERE user_id = :user_id
+          )
+      SQL
     end
   end
 

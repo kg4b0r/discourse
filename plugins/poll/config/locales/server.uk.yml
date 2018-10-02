@@ -7,7 +7,6 @@
 
 uk:
   site_settings:
-    poll_enabled: "Дозволити користувачам створювати опитування?"
     poll_maximum_options: "Максимальна кількість варіантів в опитуванні"
   poll:
     default_poll_must_have_at_least_2_options: "Голосування повинно мати щонайменше 2 варіанти."
@@ -19,3 +18,5 @@ uk:
     no_poll_with_this_name: "Для цього допису відсутнє голосування під назвою <strong>%{name}</strong>."
     topic_must_be_open_to_vote: "Тема має бути відкрита для голосування."
     poll_must_be_open_to_vote: "Опитування має бути відкритим для голосування."
+    email:
+      link_to_poll: "Натисніть, щоб подивитися опитування."

@@ -1,10 +1,10 @@
-# Developing under OS X Without Vagrant
+# Developing under OS X
 
 These instructions assume you have read and understood the **[Discourse Advanced Developer Install Guide](DEVELOPER-ADVANCED.md)**.
 
 OS X has become a popular platform for developing Ruby on Rails applications; as such, if you run OS X, you might find it more congenial to work on **[Discourse](http://discourse.org)** in your native environment. These instructions should get you there.
 
-Obviously, if you **already** develop Ruby on OS X, a lot of this will be redundant, because you'll have already done it, or something like it. If that's the case, you may well be able to just install Ruby 2.0 using RVM and get started! Discourse has enough dependencies, however (note: not a criticism!) that there's a good chance you'll find **something** else in this document that's useful for getting your Discourse development started!
+Obviously, if you **already** develop Ruby on OS X, a lot of this will be redundant, because you'll have already done it, or something like it. If that's the case, you may well be able to just install Ruby 2.4+ using RVM and get started! Discourse has enough dependencies, however (note: not a criticism!) that there's a good chance you'll find **something** else in this document that's useful for getting your Discourse development started!
 
 ## Quick Setup
 
@@ -14,6 +14,7 @@ If you don't already have a Ruby environment that's tuned to your liking, you ca
 2. Clone the Discourse repo and cd into it.
 3. Run `script/osx_dev`.
 4. Review `log/osx_dev.log` to make sure everything finished successfully.
+5. Jump To [Setting up your Discourse](#setting-up-your-discourse)
 
 Of course, it is good to understand what the script is doing and why. The rest of this guide goes through what's happening.
 
@@ -75,11 +76,11 @@ If you do already have RVM installed, this should make sure everything is up to 
     # If autolibs is set to 0-2, it will give an error for things that are missing, instead.
     rvm requirements
 
-Either way, you'll now want to install the 'turbo' version of Ruby 2.0.
+Either way, you'll now want to install Ruby 2.4+ (we recommend 2.4.4 or higher).
 
     # Now, install Ruby
-    rvm install 2.0.0-turbo
-    rvm use 2.0.0-turbo --default # Careful with this if you're already developing Ruby
+    rvm install 2.4.4
+    rvm use 2.4.4 --default # Careful with this if you're already developing Ruby
 
 ## Git
 
@@ -95,9 +96,9 @@ You should now be able to check out a clone of Discourse.
 
 Atlassian has a free Git client for OS X called [SourceTree](http://www.sourcetreeapp.com/download/) which can be extremely useful for keeping visual track of what's going on in Git-land. While it's arguably not a full substitute for command-line git (especially if you know the command line well), it's extremely powerful for a GUI version-control client.
 
-## Postgres 9.3
+## Postgres 10
 
-OS X ships with Postgres 9.1.5, but you're better off going with the latest from Homebrew or [Postgres.app](http://postgresapp.com).
+OS X might ship with Postgres 9.x, but you're better off going with 10 and above from Homebrew or [Postgres.app](http://postgresapp.com).
 
 ### Using Postgres.app
 
@@ -113,7 +114,7 @@ unix_socket_directories = '/var/pgsql_socket'   # comma-separated list of direct
 #and
 unix_socket_permissions = 0777  # begin with 0 to use octal notation
 ```
-Then create the '/var/pgsql/' folder and set up the appropriate permission in your bash (this requires admin access)
+Then create the '/var/pgsql_socket/' folder and set up the appropriate permission in your bash (this requires admin access)
 ```
 sudo mkdir /var/pgsql_socket
 sudo chmod 770 /var/pgsql_socket
@@ -132,7 +133,7 @@ If you get this error when starting `psql` from the command line:
     psql: could not connect to server: No such file or directory
     Is the server running locally and accepting
     connections on Unix domain socket "/tmp/.s.PGSQL.5432"?
-    
+
 it is because it is still looking in the `/tmp` directory and not in `/var/pgsql_socket`.
 
 If running `psql -h /var/pgsql_socket` works then you need to configure the host in your `.bash_profile`:
@@ -152,7 +153,7 @@ However, the seed data currently has some dependencies on their being a 'postgre
 
 In theory, you're not setting up with vagrant, either, and shouldn't need a vagrant user; however, again, all the seed data assumes 'vagrant'. To avoid headaches, it's probably best to go with this flow, so again, we create a 'vagrant' user.
 
-    brew install postgresql # Installs 9.2
+    brew install postgresql
     ln -sfv /usr/local/opt/postgresql/*.plist ~/Library/LaunchAgents
 
     export PATH=/usr/local/opt/postgresql/bin:$PATH # You may want to put this in your default path!
@@ -161,7 +162,7 @@ In theory, you're not setting up with vagrant, either, and shouldn't need a vagr
     launchctl load ~/Library/LaunchAgents/homebrew.mxcl.postgresql.plist
 
 ### Seed data relies on both 'postgres' and 'vagrant'
-    
+
     createuser --createdb --superuser postgres
     createuser --createdb --superuser vagrant
 
@@ -181,11 +182,11 @@ You should not need to alter `/usr/local/var/postgres/pg_hba.conf`
 
 That's about it.
 
-## PhantomJS
+## Google Chrome 59+
 
-Homebrew loves you.
+Chrome is used for running QUnit tests in headless mode.
 
-    brew install phantomjs
+Download from https://www.google.com/chrome/index.html
 
 ## ImageMagick
 
@@ -204,7 +205,7 @@ mkdir ~/.magick
 cd ~/.magick
 curl http://www.imagemagick.org/Usage/scripts/imagick_type_gen > type_gen
 find /System/Library/Fonts /Library/Fonts ~/Library/Fonts -name "*.[to]tf" | perl type_gen -f - > type.xml
-cd /usr/local/Cellar/imagemagick/<version>/etc/ImageMagick-6   
+cd /usr/local/Cellar/imagemagick/<version>/etc/ImageMagick-6
 ```
 
 Edit system config file called "type.xml" and add line near end to tell IM to
@@ -228,63 +229,47 @@ config.action_mailer.smtp_settings = { address: "localhost", port: 1025 }
 Set up [MailCatcher](https://github.com/sj26/mailcatcher) so the app can intercept
 outbound email and you can verify what is being sent.
 
-## Additional Setup Tasks
-
-You may have issues installing therubyracer when running `bundle install`
-because of a dependency on libv8. This is how to fix it:
-
-```sh
-brew tap homebrew/versions
-brew uninstall v8
-brew install v8-315
-gem uninstall -a libv8
-gem uninstall -a therubyracer
-gem install libv8 -v '3.16.14.13' -- --with-system-v8
-gem install therubyracer -v '0.12.2' -- --with-v8-dir=$(brew --prefix v8-315)
-```
+## Additional Image Tooling
 
 In addition to ImageMagick we also need to install some other image related
 software:
 
 ```sh
-brew install gifsicle jpegoptim optipng
-npm install -g svgo 
-```
-
-Install jhead
-
-```sh
-curl "http://www.sentex.net/~mwandel/jhead/jhead-2.97.tar.gz" | tar xzf -
-cd jhead-2.97
-make
-make install
+brew install gifsicle jpegoptim optipng jhead
+npm install -g svgo
 ```
 
 ## Setting up your Discourse
 
 ###  Check out the repository
-
-    git@github.com:discourse/discourse.git ~/discourse
-    cd ~/discourse # Navigate into the repository, and stay there for the rest of this how-to
-
+```sh
+git clone git@github.com:discourse/discourse.git
+cd discourse # Navigate into the repository, and stay there for the rest of this how-to
+```
 ### What about the config files?
 
 If you've stuck to all the defaults above, the default `discourse.conf` and `redis.conf` should work out of the box.
 
 ### Install the needed gems
-
-    bundle install # Yes, this DOES take a while. No, it's not really cloning all of rubygems :-)
+```sh
+bundle install
+```
 
 ### Prepare your database
+```sh
+# run this if there was a pre-existing database
+bundle exec rake db:drop
+RAILS_ENV=test bundle exec rake db:drop
 
-    rake db:migrate
-    rake db:test:prepare
-    rake db:seed_fu
+# time to create the database and run migrations
+bundle exec rake db:create db:migrate
+RAILS_ENV=test bundle exec rake db:create db:migrate
+```
 
 ## Now, test it out!
-
-    bundle exec rspec
-
+```sh
+bundle exec rspec
+```
 All specs should pass
 
 ### Deal with any problems which arise.

@@ -7,7 +7,7 @@
     <title><%= @topic_view.title %></title>
     <link><%= topic_url %></link>
     <description><%= @topic_view.posts.first.raw %></description>
-    <%= "<language>#{lang}</language>" if lang %>
+    <% if lang %><language><%= lang.sub('_', '-')%></language><% end %>
     <lastBuildDate><%= @topic_view.topic.bumped_at.rfc2822 %></lastBuildDate>
     <category><%= @topic_view.topic.category.name %></category>
     <atom:link href="<%= topic_url %>.rss" rel="self" type="application/rss+xml" />
@@ -31,7 +31,7 @@
         <link><%= post_url %></link>
         <pubDate><%= post.created_at.rfc2822 %></pubDate>
         <guid isPermaLink="false"><%= Discourse.current_hostname %>-post-<%= post.topic_id %>-<%= post.post_number %></guid>
-        <source url="<%= @topic_view.absolute_url %>.rss"><%= @topic_view.title %></source>
+        <source url="<%= topic_url %>.rss"><%= @topic_view.title %></source>
       </item>
     <% end %>
   </channel>

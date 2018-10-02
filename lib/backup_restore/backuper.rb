@@ -1,11 +1,11 @@
+require 'disk_space'
+
 module BackupRestore
 
   class Backuper
-    include BackupRestore::Utils
-
     attr_reader :success
 
-    def initialize(user_id, opts={})
+    def initialize(user_id, opts = {})
       @user_id = user_id
       @client_id = opts[:client_id]
       @publish_to_message_bus = opts[:publish_to_message_bus] || false
@@ -54,14 +54,11 @@ module BackupRestore
       @success = true
       File.join(@archive_directory, @backup_filename)
     ensure
-      begin
-        notify_user
-        remove_old
-      rescue => ex
-        Rails.logger.error("#{ex}\n" + ex.backtrace.join("\n"))
-      end
-
+      remove_old
       clean_up
+      notify_user
+      log "Finished!"
+
       @success ? log("[SUCCESS]") : log("[FAILED]")
     end
 
@@ -198,9 +195,9 @@ module BackupRestore
     def move_dump_backup
       log "Finalizing database dump file: #{@backup_filename}"
 
-      execute_command(
-        "mv #{@dump_filename} #{File.join(@archive_directory, @backup_filename)}",
-        "Failed to move database dump file."
+      Discourse::Utils.execute_command(
+        'mv', @dump_filename, File.join(@archive_directory, @backup_filename),
+        failure_message: "Failed to move database dump file."
       )
 
       remove_tmp_directory
@@ -212,17 +209,17 @@ module BackupRestore
       tar_filename = "#{@archive_basename}.tar"
 
       log "Making sure archive does not already exist..."
-      execute_command("rm -f #{tar_filename}")
-      execute_command("rm -f #{tar_filename}.gz")
+      Discourse::Utils.execute_command('rm', '-f', tar_filename)
+      Discourse::Utils.execute_command('rm', '-f', "#{tar_filename}.gz")
 
       log "Creating empty archive..."
-      execute_command("tar --create --file #{tar_filename} --files-from /dev/null")
+      Discourse::Utils.execute_command('tar', '--create', '--file', tar_filename, '--files-from', '/dev/null')
 
       log "Archiving data dump..."
-      FileUtils.cd(File.dirname("#{@dump_filename}")) do
-        execute_command(
-          "tar --append --dereference --file #{tar_filename} #{File.basename(@dump_filename)}",
-          "Failed to archive data dump."
+      FileUtils.cd(File.dirname(@dump_filename)) do
+        Discourse::Utils.execute_command(
+          'tar', '--append', '--dereference', '--file', tar_filename, File.basename(@dump_filename),
+          failure_message: "Failed to archive data dump."
         )
       end
 
@@ -231,9 +228,9 @@ module BackupRestore
       log "Archiving uploads..."
       FileUtils.cd(File.join(Rails.root, "public")) do
         if File.directory?(upload_directory)
-          execute_command(
-            "tar --append --dereference --file #{tar_filename} #{upload_directory}",
-            "Failed to archive uploads."
+          Discourse::Utils.execute_command(
+            'tar', '--append', '--dereference', '--warning=no-file-changed', '--file', tar_filename, upload_directory,
+            failure_message: "Failed to archive uploads."
           )
         else
           log "No uploads found, skipping archiving uploads..."
@@ -243,7 +240,7 @@ module BackupRestore
       remove_tmp_directory
 
       log "Gzipping archive, this may take a while..."
-      execute_command("gzip -5 #{tar_filename}", "Failed to gzip archive.")
+      Discourse::Utils.execute_command('gzip', '-5', tar_filename, failure_message: "Failed to gzip archive.")
     end
 
     def after_create_hook
@@ -255,15 +252,25 @@ module BackupRestore
     def remove_old
       log "Removing old backups..."
       Backup.remove_old
+    rescue => ex
+      log "Something went wrong while removing old backups.", ex
     end
 
     def notify_user
       log "Notifying '#{@user.username}' of the end of the backup..."
-      if @success
-        SystemMessage.create_from_system_user(@user, :backup_succeeded, logs: pretty_logs(@logs))
-      else
-        SystemMessage.create_from_system_user(@user, :backup_failed, logs: pretty_logs(@logs))
+      status = @success ? :backup_succeeded : :backup_failed
+
+      post = SystemMessage.create_from_system_user(@user, status,
+        logs: Discourse::Utils.pretty_logs(@logs)
+      )
+
+      if !@success && @user.id == Discourse::SYSTEM_USER_ID
+        post.topic.invite_group(@user, Group[:admins])
       end
+
+      post
+    rescue => ex
+      log "Something went wrong while notifying user.", ex
     end
 
     def clean_up
@@ -272,37 +279,50 @@ module BackupRestore
       unpause_sidekiq
       disable_readonly_mode if Discourse.readonly_mode?
       mark_backup_as_not_running
-      log "Finished!"
+      refresh_disk_space
+    end
+
+    def refresh_disk_space
+      log "Refreshing disk stats..."
+      DiskSpace.reset_cached_stats
+    rescue => ex
+      log "Something went wrong while refreshing disk stats.", ex
     end
 
     def remove_tar_leftovers
       log "Removing '.tar' leftovers..."
-      `rm -f #{@archive_directory}/*.tar`
+      Dir["#{@archive_directory}/*.tar"].each { |filename| File.delete(filename) }
+    rescue => ex
+      log "Something went wrong while removing '.tar' leftovers.", ex
     end
 
     def remove_tmp_directory
       log "Removing tmp '#{@tmp_directory}' directory..."
       FileUtils.rm_rf(@tmp_directory) if Dir[@tmp_directory].present?
-    rescue
-      log "Something went wrong while removing the following tmp directory: #{@tmp_directory}"
+    rescue => ex
+      log "Something went wrong while removing the following tmp directory: #{@tmp_directory}", ex
     end
 
     def unpause_sidekiq
       log "Unpausing sidekiq..."
       Sidekiq.unpause!
-    rescue
-      log "Something went wrong while unpausing Sidekiq."
+    rescue => ex
+      log "Something went wrong while unpausing Sidekiq.", ex
     end
 
     def disable_readonly_mode
       return if @readonly_mode_was_enabled
       log "Disabling readonly mode..."
       Discourse.disable_readonly_mode
+    rescue => ex
+      log "Something went wrong while disabling readonly mode.", ex
     end
 
     def mark_backup_as_not_running
       log "Marking backup as finished..."
       BackupRestore.mark_as_not_running!
+    rescue => ex
+      log "Something went wrong while marking backup as finished.", ex
     end
 
     def ensure_directory_exists(directory)
@@ -310,11 +330,12 @@ module BackupRestore
       FileUtils.mkdir_p(directory)
     end
 
-    def log(message)
+    def log(message, ex = nil)
       timestamp = Time.now.strftime("%Y-%m-%d %H:%M:%S")
-      puts(message) rescue nil
-      publish_log(message, timestamp) rescue nil
+      puts(message)
+      publish_log(message, timestamp)
       save_log(message, timestamp)
+      Rails.logger.error("#{ex}\n" + ex.backtrace.join("\n")) if ex
     end
 
     def publish_log(message, timestamp)

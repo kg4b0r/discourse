@@ -8,14 +8,20 @@ export default Em.Component.extend(UploadMixin, {
 
   @computed("uploading")
   uploadButtonText(uploading) {
-    return uploading ? I18n.t("uploading") : I18n.t("user.change_avatar.upload_picture");
+    return uploading
+      ? I18n.t("uploading")
+      : I18n.t("user.change_avatar.upload_picture");
+  },
+
+  validateUploadedFilesOptions() {
+    return { imagesOnly: true };
   },
 
   uploadDone(upload) {
     this.setProperties({
       imageIsNotASquare: upload.width !== upload.height,
       uploadedAvatarTemplate: upload.url,
-      uploadedAvatarId: upload.id,
+      uploadedAvatarId: upload.id
     });
 
     this.sendAction("done");

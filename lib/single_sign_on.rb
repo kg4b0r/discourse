@@ -1,12 +1,44 @@
 class SingleSignOn
-  ACCESSORS = [:nonce, :name, :username, :email, :avatar_url, :avatar_force_update, :require_activation,
-               :bio, :external_id, :return_sso_url, :admin, :moderator, :suppress_welcome_message]
+
+  ACCESSORS = %i{
+    add_groups
+    admin moderator
+    avatar_force_update
+    avatar_url
+    bio
+    card_background_url
+    email
+    external_id
+    groups
+    locale
+    locale_force_update
+    name
+    nonce
+    profile_background_url
+    remove_groups
+    require_activation
+    return_sso_url
+    suppress_welcome_message
+    title
+    username
+    website
+  }
+
   FIXNUMS = []
-  BOOLS = [:avatar_force_update, :admin, :moderator, :require_activation, :suppress_welcome_message]
+
+  BOOLS = %i{
+    admin
+    avatar_force_update
+    locale_force_update
+    moderator
+    require_activation
+    suppress_welcome_message
+  }
+
   NONCE_EXPIRY_TIME = 10.minutes
 
   attr_accessor(*ACCESSORS)
-  attr_accessor :sso_secret, :sso_url
+  attr_writer :sso_secret, :sso_url
 
   def self.sso_secret
     raise RuntimeError, "sso_secret not implemented on class, be sure to set it on instance"
@@ -42,12 +74,8 @@ class SingleSignOn
       sso.send("#{k}=", val)
     end
 
-    decoded_hash.each do |k,v|
-      # 1234567
-      # custom.
-      #
-      if k[0..6] == "custom."
-        field = k[7..-1]
+    decoded_hash.each do |k, v|
+      if field = k[/^custom\.(.+)$/, 1]
         sso.custom_fields[field] = v
       end
     end
@@ -56,9 +84,7 @@ class SingleSignOn
   end
 
   def diagnostics
-    SingleSignOn::ACCESSORS.map do |a|
-      "#{a}: #{send(a)}"
-    end.join("\n")
+    SingleSignOn::ACCESSORS.map { |a| "#{a}: #{send(a)}" }.join("\n")
   end
 
   def sso_secret
@@ -73,34 +99,30 @@ class SingleSignOn
     @custom_fields ||= {}
   end
 
-
   def sign(payload)
     OpenSSL::HMAC.hexdigest("sha256", sso_secret, payload)
   end
 
-
-  def to_url(base_url=nil)
+  def to_url(base_url = nil)
     base = "#{base_url || sso_url}"
     "#{base}#{base.include?('?') ? '&' : '?'}#{payload}"
   end
 
   def payload
-    payload = Base64.encode64(unsigned_payload)
+    payload = Base64.strict_encode64(unsigned_payload)
     "sso=#{CGI::escape(payload)}&sig=#{sign(payload)}"
   end
 
   def unsigned_payload
     payload = {}
-    ACCESSORS.each do |k|
-     next if (val = send k) == nil
 
+    ACCESSORS.each do |k|
+      next if (val = send k) == nil
      payload[k] = val
     end
 
-    if @custom_fields
-      @custom_fields.each do |k,v|
-        payload["custom.#{k}"] = v.to_s
-      end
+    @custom_fields&.each do |k, v|
+      payload["custom.#{k}"] = v.to_s
     end
 
     Rack::Utils.build_query(payload)

@@ -15,6 +15,9 @@ describe AdminDashboardData do
 
       AdminDashboardData.fetch_problems
       expect(called).to eq(true)
+
+      AdminDashboardData.fetch_problems(check_force_https: true)
+      expect(called).to eq(true)
     end
 
     it 'calls the passed method' do
@@ -123,113 +126,42 @@ describe AdminDashboardData do
     end
   end
 
-  describe 'send_consumer_email_check' do
-    subject { described_class.new.send_consumer_email_check }
-
-    it 'returns nil if gmail.com is not in the smtp_settings address' do
-      ActionMailer::Base.stubs(:smtp_settings).returns({address: 'mandrillapp.com'})
-      expect(subject).to be_nil
-    end
-
-    context 'gmail.com is in the smtp_settings address' do
-      before { ActionMailer::Base.stubs(:smtp_settings).returns({address: 'smtp.gmail.com'}) }
-
-      it 'returns nil in development env' do
-        Rails.stubs(env: ActiveSupport::StringInquirer.new('development'))
-        expect(subject).to be_nil
-      end
-
-      it 'returns a string when in production env' do
-        Rails.stubs(env: ActiveSupport::StringInquirer.new('production'))
-        expect(subject).not_to be_nil
-      end
-    end
-  end
-
-  describe 'default_logo_check' do
-    subject { described_class.new.default_logo_check }
-
-    describe 'favicon_url check' do
-      before do
-        SiteSetting.logo_url = '/assets/my-logo.jpg'
-        SiteSetting.logo_small_url = '/assets/my-small-logo.jpg'
-      end
-
-      it 'returns a string when favicon_url is default' do
-        expect(subject).not_to be_nil
-      end
-
-      it 'returns a string when favicon_url contains default filename' do
-        SiteSetting.favicon_url = "/prefix#{SiteSetting.defaults[:favicon_url]}"
-        expect(subject).not_to be_nil
-      end
-
-      it 'returns nil when favicon_url does not match default-favicon.png' do
-        SiteSetting.favicon_url = '/assets/my-favicon.png'
-        expect(subject).to be_nil
-      end
-    end
-
-    describe 'logo_url check' do
-      before do
-        SiteSetting.favicon_url = '/assets/my-favicon.png'
-        SiteSetting.logo_small_url = '/assets/my-small-logo.jpg'
-      end
-
-      it 'returns a string when logo_url is default' do
-        expect(subject).not_to be_nil
-      end
-
-      it 'returns a string when logo_url contains default filename' do
-        SiteSetting.logo_url = "/prefix#{SiteSetting.defaults[:logo_url]}"
-        expect(subject).not_to be_nil
-      end
-
-      it 'returns nil when logo_url does not match d-logo-sketch.png' do
-        SiteSetting.logo_url = '/assets/my-logo.png'
-        expect(subject).to be_nil
-      end
-    end
-
-    # etc.
-  end
-
   describe 'auth_config_checks' do
 
     shared_examples 'problem detection for login providers' do
       context 'when disabled' do
         it 'returns nil' do
-          SiteSetting.stubs(enable_setting).returns(false)
+          SiteSetting.public_send("#{enable_setting}=", false)
           expect(subject).to be_nil
         end
       end
 
       context 'when enabled' do
         before do
-          SiteSetting.stubs(enable_setting).returns(true)
+          SiteSetting.public_send("#{enable_setting}=", true)
         end
 
-        it 'returns nil key and secret are set' do
-          SiteSetting.stubs(key).returns('12313213')
-          SiteSetting.stubs(secret).returns('12312313123')
+        it 'returns nil when key and secret are set' do
+          SiteSetting.public_send("#{key}=", '12313213')
+          SiteSetting.public_send("#{secret}=", '12312313123')
           expect(subject).to be_nil
         end
 
         it 'returns a string when key is not set' do
-          SiteSetting.stubs(key).returns('')
-          SiteSetting.stubs(secret).returns('12312313123')
+          SiteSetting.public_send("#{key}=", '')
+          SiteSetting.public_send("#{secret}=", '12312313123')
           expect(subject).to_not be_nil
         end
 
         it 'returns a string when secret is not set' do
-          SiteSetting.stubs(key).returns('123123')
-          SiteSetting.stubs(secret).returns('')
+          SiteSetting.public_send("#{key}=", '123123')
+          SiteSetting.public_send("#{secret}=", '')
           expect(subject).to_not be_nil
         end
 
         it 'returns a string when key and secret are not set' do
-          SiteSetting.stubs(key).returns('')
-          SiteSetting.stubs(secret).returns('')
+          SiteSetting.public_send("#{key}=", '')
+          SiteSetting.public_send("#{secret}=", '')
           expect(subject).to_not be_nil
         end
       end
@@ -260,6 +192,124 @@ describe AdminDashboardData do
     end
   end
 
+  describe 's3_config_check' do
+    shared_examples 'problem detection for s3-dependent setting' do
+      subject { described_class.new.s3_config_check }
+      let(:access_keys) { [:s3_access_key_id, :s3_secret_access_key] }
+      let(:all_cred_keys) { access_keys + [:s3_use_iam_profile] }
+      let(:all_setting_keys) { all_cred_keys + [bucket_key] }
+
+      def all_setting_permutations(keys)
+        ['a', ''].repeated_permutation(keys.size) do |*values|
+          hash = Hash[keys.zip(values)]
+          hash.each do |key, value|
+            SiteSetting.public_send("#{key}=", value)
+          end
+          yield hash
+        end
+      end
+
+      context 'when setting is enabled' do
+        let(:setting_enabled) { true }
+        before do
+          SiteSetting.public_send("#{setting_key}=", setting_enabled)
+          SiteSetting.public_send("#{bucket_key}=", bucket_value)
+        end
+
+        context 'when bucket is blank' do
+          let(:bucket_value) { '' }
+
+          it "always returns a string" do
+            all_setting_permutations(all_cred_keys) do
+              expect(subject).to_not be_nil
+            end
+          end
+        end
+
+        context 'when bucket is filled in' do
+          let(:bucket_value) { 'a' }
+          before do
+            SiteSetting.public_send("s3_use_iam_profile=", use_iam_profile)
+          end
+
+          context 'when using iam profile' do
+            let(:use_iam_profile) { true }
+
+            it 'always returns nil' do
+              all_setting_permutations(access_keys) do
+                expect(subject).to be_nil
+              end
+            end
+          end
+
+          context 'when not using iam profile' do
+            let(:use_iam_profile) { false }
+
+            it 'returns nil only if both access key fields are filled in' do
+              all_setting_permutations(access_keys) do |settings|
+                if settings.values.all?
+                  expect(subject).to be_nil
+                else
+                  expect(subject).to_not be_nil
+                end
+              end
+            end
+          end
+        end
+      end
+
+      context 'when setting is not enabled' do
+        before do
+          SiteSetting.public_send("#{setting_key}=", false)
+        end
+
+        it "always returns nil" do
+          all_setting_permutations(all_setting_keys) do
+            expect(subject).to be_nil
+          end
+        end
+      end
+    end
+
+    describe 'uploads' do
+      let(:setting_key) { :enable_s3_uploads }
+      let(:bucket_key) { :s3_upload_bucket }
+      include_examples 'problem detection for s3-dependent setting'
+    end
+
+    describe 'backups' do
+      let(:setting_key) { :enable_s3_backups }
+      let(:bucket_key) { :s3_backup_bucket }
+      include_examples 'problem detection for s3-dependent setting'
+    end
+  end
+
+  describe 'force_https_check' do
+    subject { described_class.new(check_force_https: true).force_https_check }
+
+    it 'returns nil if force_https site setting enabled' do
+      SiteSetting.force_https = true
+      expect(subject).to be_nil
+    end
+
+    it 'returns nil if force_https site setting not enabled' do
+      SiteSetting.force_https = false
+      expect(subject).to eq(I18n.t('dashboard.force_https_warning'))
+    end
+  end
+
+  describe 'ignore force_https_check' do
+    subject { described_class.new(check_force_https: false).force_https_check }
+
+    it 'returns nil' do
+      SiteSetting.force_https = true
+      expect(subject).to be_nil
+
+      SiteSetting.force_https = false
+      expect(subject).to be_nil
+    end
+  end
+
   describe 'stats cache' do
     include_examples 'stats cachable'
   end
@@ -286,4 +336,34 @@ describe AdminDashboardData do
     end
   end
 
+  describe '#out_of_date_themes' do
+    let(:remote) { RemoteTheme.create!(remote_url: "https://github.com/org/testtheme") }
+    let!(:theme) { Fabricate(:theme, remote_theme: remote, name: "Test< Theme") }
+
+    it "outputs correctly formatted html" do
+      remote.update!(local_version: "old version", remote_version: "new version", commits_behind: 2)
+      dashboard_data = described_class.new
+      expect(dashboard_data.out_of_date_themes).to eq(
+        I18n.t("dashboard.out_of_date_themes") + "<ul><li><a href=\"/admin/customize/themes/#{theme.id}\">Test&lt; Theme</a></li></ul>"
+      )
+
+      remote.update!(local_version: "new version", commits_behind: 0)
+      expect(dashboard_data.out_of_date_themes).to eq(nil)
+    end
+  end
+
+  describe '#unreachable_themes' do
+    let(:remote) { RemoteTheme.create!(remote_url: "https://github.com/org/testtheme", last_error_text: "can't reach repo :'(") }
+    let!(:theme) { Fabricate(:theme, remote_theme: remote, name: "Test< Theme") }
+
+    it "outputs correctly formatted html" do
+      dashboard_data = described_class.new
+      expect(dashboard_data.unreachable_themes).to eq(
+        I18n.t("dashboard.unreachable_themes") + "<ul><li><a href=\"/admin/customize/themes/#{theme.id}\">Test&lt; Theme</a></li></ul>"
+      )
+
+      remote.update!(last_error_text: nil)
+      expect(dashboard_data.out_of_date_themes).to eq(nil)
+    end
+  end
 end

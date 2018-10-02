@@ -26,7 +26,7 @@ describe SiteSetting do
 
   describe 'private_message_title_length' do
     it 'returns a range of min/max pm topic title length' do
-      expect(SiteSetting.private_message_title_length).to eq(SiteSetting.defaults[:min_private_message_title_length]..SiteSetting.defaults[:max_topic_title_length])
+      expect(SiteSetting.private_message_title_length).to eq(SiteSetting.defaults[:min_personal_message_title_length]..SiteSetting.defaults[:max_topic_title_length])
     end
   end
 
@@ -52,7 +52,19 @@ describe SiteSetting do
   end
 
   describe "top_menu" do
-    before { SiteSetting.top_menu = 'one,-nope|two|three,-not|four,ignored|category/xyz|latest' }
+    describe "validations" do
+      it "always demands latest" do
+        expect do
+          SiteSetting.top_menu = 'categories'
+        end.to raise_error(Discourse::InvalidParameters)
+      end
+
+      it "does not allow random text" do
+        expect do
+          SiteSetting.top_menu = 'latest|random'
+        end.to raise_error(Discourse::InvalidParameters)
+      end
+    end
 
     describe "items" do
       let(:items) { SiteSetting.top_menu_items }
@@ -64,16 +76,53 @@ describe SiteSetting do
 
     describe "homepage" do
       it "has homepage" do
-        expect(SiteSetting.homepage).to eq('one')
+        SiteSetting.top_menu = "bookmarks|latest"
+        expect(SiteSetting.homepage).to eq('bookmarks')
       end
     end
+  end
+
+  describe "min_redirected_to_top_period" do
+
+    context "has_enough_top_topics" do
+
+      before do
+        SiteSetting.topics_per_period_in_top_page = 2
+        SiteSetting.top_page_default_timeframe = 'daily'
+
+        2.times do
+          TopTopic.create!(daily_score: 2.5)
+        end
+
+        TopTopic.refresh!
+      end
+
+      it "should_return_a_time_period" do
+        expect(SiteSetting.min_redirected_to_top_period(1.days.ago)).to eq(:daily)
+      end
+
+    end
+
+    context "does_not_have_enough_top_topics" do
+
+      before do
+        SiteSetting.topics_per_period_in_top_page = 20
+        SiteSetting.top_page_default_timeframe = 'daily'
+        TopTopic.refresh!
+      end
+
+      it "should_return_a_time_period" do
+        expect(SiteSetting.min_redirected_to_top_period(1.days.ago)).to eq(nil)
+      end
+
+    end
+
   end
 
   describe "scheme" do
     before do
       SiteSetting.force_https = true
     end
-
 
     it "returns http when ssl is disabled" do
       SiteSetting.force_https = false
@@ -83,19 +132,31 @@ describe SiteSetting do
     it "returns https when using ssl" do
       expect(SiteSetting.scheme).to eq("https")
     end
+  end
 
+  context "shared_drafts_enabled?" do
+    it "returns false by default" do
+      expect(SiteSetting.shared_drafts_enabled?).to eq(false)
+    end
+
+    it "returns false when the category is uncategorized" do
+      SiteSetting.shared_drafts_category = SiteSetting.uncategorized_category_id
+      expect(SiteSetting.shared_drafts_enabled?).to eq(false)
+    end
+
+    it "returns true when the category is valid" do
+      SiteSetting.shared_drafts_category = Fabricate(:category).id
+      expect(SiteSetting.shared_drafts_enabled?).to eq(true)
+    end
   end
 
   context 'deprecated site settings' do
-    before do
-      SiteSetting.force_https = true
-    end
-
-    after do
-      SiteSetting.force_https = false
-    end
 
     describe '#use_https' do
+      before do
+        SiteSetting.force_https = true
+      end
+
       it 'should act as a proxy to the new methods' do
         expect(SiteSetting.use_https).to eq(true)
         expect(SiteSetting.use_https?).to eq(true)
@@ -104,6 +165,38 @@ describe SiteSetting do
 
         expect(SiteSetting.force_https).to eq(false)
         expect(SiteSetting.force_https?).to eq(false)
+      end
+    end
+
+    describe 'rename private message to personal message' do
+      before do
+        SiteSetting.min_personal_message_title_length = 15
+        SiteSetting.enable_personal_messages = true
+        SiteSetting.personal_email_time_window_seconds = 15
+        SiteSetting.max_personal_messages_per_day = 15
+        SiteSetting.default_email_personal_messages = true
+      end
+
+      it 'should act as a proxy to the new methods' do
+        expect(SiteSetting.min_private_message_title_length).to eq(15)
+        SiteSetting.min_private_message_title_length = 5
+        expect(SiteSetting.min_personal_message_title_length).to eq(5)
+
+        expect(SiteSetting.enable_private_messages).to eq(true)
+        SiteSetting.enable_private_messages = false
+        expect(SiteSetting.enable_personal_messages).to eq(false)
+
+        expect(SiteSetting.private_email_time_window_seconds).to eq(15)
+        SiteSetting.private_email_time_window_seconds = 5
+        expect(SiteSetting.personal_email_time_window_seconds).to eq(5)
+
+        expect(SiteSetting.max_private_messages_per_day).to eq(15)
+        SiteSetting.max_private_messages_per_day = 5
+        expect(SiteSetting.max_personal_messages_per_day).to eq(5)
+
+        expect(SiteSetting.default_email_private_messages).to eq(true)
+        SiteSetting.default_email_private_messages = false
+        expect(SiteSetting.default_email_personal_messages).to eq(false)
       end
     end
   end

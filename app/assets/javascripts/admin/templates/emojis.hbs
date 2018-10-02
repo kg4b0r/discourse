@@ -5,8 +5,8 @@
 
   <p>{{emoji-uploader done="emojiUploaded"}}</p>
 
-  {{#if model}}
-    <div class="span8">
+  {{#if sortedEmojis}}
+    <div>
       <table id="custom_emoji">
         <thead>
           <tr>
@@ -16,11 +16,11 @@
           </tr>
         </thead>
         <tbody>
-          {{#each model as |e|}}
+          {{#each sortedEmojis as |e|}}
             <tr>
-              <th><img class="emoji" src="{{unbound e.url}}" title="{{unbound e.name}}"></th>
+              <th><img class="emoji emoji-custom" src="{{unbound e.url}}" title="{{unbound e.name}}"></th>
               <th>:{{e.name}}:</th>
-              <th><button {{action "destroy" e}} class='btn btn-danger no-text pull-right'>{{fa-icon 'trash-o'}} </button></th>
+              <th><button {{action "destroy" e}} class='btn btn-danger no-text pull-right'>{{d-icon 'trash-o'}} </button></th>
             </tr>
           {{/each}}
         </tbody>

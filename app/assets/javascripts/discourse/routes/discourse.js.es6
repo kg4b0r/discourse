@@ -1,30 +1,39 @@
-import Composer from 'discourse/models/composer';
+import Composer from "discourse/models/composer";
 
 const DiscourseRoute = Ember.Route.extend({
+  showFooter: false,
 
   // Set to true to refresh a model without a transition if a query param
   // changes
   resfreshQueryWithoutTransition: false,
 
+  activate() {
+    this._super();
+    if (this.get("showFooter")) {
+      this.controllerFor("application").set("showFooter", true);
+    }
+  },
+
   refresh() {
-    if (!this.refreshQueryWithoutTransition) { return this._super(); }
+    if (!this.refreshQueryWithoutTransition) {
+      return this._super();
+    }
 
-    if (!this.router.router.activeTransition) {
+    if (!this.router._routerMicrolib.activeTransition) {
       const controller = this.controller,
-            model = controller.get('model'),
-            params = this.controller.getProperties(Object.keys(this.queryParams));
+        model = controller.get("model"),
+        params = this.controller.getProperties(Object.keys(this.queryParams));
 
-      model.set('loading', true);
+      model.set("loading", true);
       this.model(params).then(m => this.setupController(controller, m));
     }
   },
 
   _refreshTitleOnce() {
-    this.send('_collectTitleTokens', []);
+    this.send("_collectTitleTokens", []);
   },
 
   actions: {
-
     _collectTitleTokens(tokens) {
       // If there's a title token method, call it and get the token
       if (this.titleToken) {
@@ -44,63 +53,54 @@ const DiscourseRoute = Ember.Route.extend({
 
     refreshTitle() {
       Ember.run.once(this, this._refreshTitleOnce);
-    }
-  },
+    },
 
-  redirectIfLoginRequired() {
-    const app = this.controllerFor('application');
-    if (app.get('loginRequired')) {
-      this.replaceWith('login');
-    }
-  },
+    clearTopicDraft() {
+      // perhaps re-delegate this to root controller in all cases?
+      // TODO also poison the store so it does not come back from the
+      // dead
+      if (this.get("controller.list.draft")) {
+        this.set("controller.list.draft", null);
+      }
 
-  openTopicDraft(model){
-    // If there's a draft, open the create topic composer
-    if (model.draft) {
-      const composer = this.controllerFor('composer');
-      if (!composer.get('model.viewOpen')) {
-        composer.open({
-          action: Composer.CREATE_TOPIC,
-          draft: model.draft,
-          draftKey: model.draft_key,
-          draftSequence: model.draft_sequence
-        });
+      if (this.controllerFor("discovery/categories").get("model.draft")) {
+        this.controllerFor("discovery/categories").set("model.draft", null);
+      }
+
+      if (this.controllerFor("discovery/topics").get("model.draft")) {
+        this.controllerFor("discovery/topics").set("model.draft", null);
       }
     }
   },
 
+  redirectIfLoginRequired() {
+    const app = this.controllerFor("application");
+    if (app.get("loginRequired")) {
+      this.replaceWith("login");
+    }
+  },
+
+  openTopicDraft(model) {
+    const composer = this.controllerFor("composer");
+
+    if (
+      composer.get("model.action") === Composer.CREATE_TOPIC &&
+      composer.get("model.draftKey") === model.draft_key
+    ) {
+      composer.set("model.composeState", Composer.OPEN);
+    } else {
+      composer.open({
+        action: Composer.CREATE_TOPIC,
+        draft: model.draft,
+        draftKey: model.draft_key,
+        draftSequence: model.draft_sequence
+      });
+    }
+  },
+
   isPoppedState(transition) {
-    return (!transition._discourse_intercepted) && (!!transition.intent.url);
+    return !transition._discourse_intercepted && !!transition.intent.url;
   }
 });
-
-export function cleanDOM() {
-  if (window.MiniProfiler) {
-    window.MiniProfiler.pageTransition();
-  }
-
-  // Close some elements that may be open
-  $('header ul.icons li').removeClass('active');
-  $('[data-toggle="dropdown"]').parent().removeClass('open');
-  // close the lightbox
-  if ($.magnificPopup && $.magnificPopup.instance) {
-    $.magnificPopup.instance.close();
-    $('body').removeClass('mfp-zoom-out-cur');
-  }
-
-  // Remove any link focus
-  // NOTE: the '.not("body")' is here to prevent a bug in IE10 on Win7
-  // cf. https://stackoverflow.com/questions/5657371
-  $(document.activeElement).not("body").not(".no-blur").blur();
-
-  Discourse.set('notifyCount',0);
-  Discourse.__container__.lookup('route:application').send('closeModal');
-  const hideDropDownFunction = $('html').data('hide-dropdown');
-  if (hideDropDownFunction) { hideDropDownFunction(); }
-
-  // TODO: Avoid container lookup here
-  const appEvents = Discourse.__container__.lookup('app-events:main');
-  appEvents.trigger('dom:clean');
-}
 
 export default DiscourseRoute;

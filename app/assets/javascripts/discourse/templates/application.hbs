@@ -1,31 +1,33 @@
-
+{{plugin-outlet name="above-site-header"}}
 {{site-header canSignUp=canSignUp
-              showCreateAccount="showCreateAccount"
-              showLogin="showLogin"
-              showKeyboard="showKeyboardShortcutsHelp"
-              toggleMobileView="toggleMobileView"
-              toggleAnonymous="toggleAnonymous"
-              logout="logout"
-              showSearchHelp="showSearchHelp"}}
+              showCreateAccount=(route-action "showCreateAccount")
+              showLogin=(route-action "showLogin")
+              showKeyboard=(route-action "showKeyboardShortcutsHelp")
+              toggleMobileView=(route-action "toggleMobileView")
+              toggleAnonymous=(route-action "toggleAnonymous")
+              logout=(route-action "logout")}}
+
+{{plugin-outlet name="below-site-header" args=(hash currentPath=currentPath)}}
 
 <div id="main-outlet" class="wrap">
   <div class="container">
     {{#if showTop}}
-      {{custom-html "top"}}
+      {{custom-html name="top"}}
     {{/if}}
+    {{notification-consent-banner}}
     {{global-notice}}
     {{create-topics-notice}}
   </div>
   {{outlet}}
-  {{render "user-card"}}
+  {{outlet "user-card"}}
 </div>
 
-{{plugin-outlet "above-footer"}}
+{{plugin-outlet name="above-footer" args=(hash showFooter=showFooter)}}
 {{#if showFooter}}
-  {{custom-html "footer"}}
+  {{custom-html name="footer" triggerAppEvent="true"}}
 {{/if}}
-{{plugin-outlet "below-footer"}}
+{{plugin-outlet name="below-footer" args=(hash showFooter=showFooter)}}
 
-{{render "modal"}}
-{{render "topic-entrance"}}
-{{render "composer"}}
+{{outlet "modal"}}
+{{topic-entrance}}
+{{outlet "composer"}}

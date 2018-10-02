@@ -1,45 +1,35 @@
-import { withPluginApi } from 'discourse/lib/plugin-api';
+import { withPluginApi } from "discourse/lib/plugin-api";
 import { observes } from "ember-addons/ember-computed-decorators";
-
-function createPollView(container, post, poll, vote, publicPoll) {
-  const controller = container.lookup("controller:poll", { singleton: false });
-  const view = container.lookup("view:poll");
-
-  controller.setProperties({
-    model: poll,
-    vote: vote,
-    public: publicPoll,
-    post
-  });
-
-  view.set("controller", controller);
-
-  return view;
-}
-
-let _pollViews;
+import { getRegister } from "discourse-common/lib/get-owner";
+import WidgetGlue from "discourse/widgets/glue";
 
 function initializePolls(api) {
+  const register = getRegister(api);
 
-  const TopicController = api.container.lookupFactory('controller:topic');
-  TopicController.reopen({
-    subscribe(){
+  api.modifyClass("controller:topic", {
+    subscribe() {
       this._super();
       this.messageBus.subscribe("/polls/" + this.get("model.id"), msg => {
-        const post = this.get('model.postStream').findLoadedPost(msg.post_id);
+        const post = this.get("model.postStream").findLoadedPost(msg.post_id);
         if (post) {
-          post.set('polls', msg.polls);
+          post.set("polls", msg.polls);
         }
       });
     },
-    unsubscribe(){
-      this.messageBus.unsubscribe('/polls/*');
+    unsubscribe() {
+      this.messageBus.unsubscribe("/polls/*");
       this._super();
     }
   });
 
-  const Post = api.container.lookupFactory('model:post');
-  Post.reopen({
+  let _glued = [];
+  let _interval = null;
+
+  function rerender() {
+    _glued.forEach(g => g.queueRerender());
+  }
+
+  api.modifyClass("model:post", {
     _polls: null,
     pollsObject: null,
 
@@ -49,7 +39,7 @@ function initializePolls(api) {
       const polls = this.get("polls");
       if (polls) {
         this._polls = this._polls || {};
-        _.map(polls, (v,k) => {
+        _.map(polls, (v, k) => {
           const existing = this._polls[k];
           if (existing) {
             this._polls[k].setProperties(v);
@@ -58,65 +48,73 @@ function initializePolls(api) {
           }
         });
         this.set("pollsObject", this._polls);
+        rerender();
       }
     }
   });
 
-  function cleanUpPollViews() {
-    if (_pollViews) {
-      Object.keys(_pollViews).forEach(pollName => _pollViews[pollName].destroy());
+  function attachPolls($elem, helper) {
+    const $polls = $(".poll", $elem);
+    if (!$polls.length) {
+      return;
     }
-    _pollViews = null;
-  }
 
-  function createPollViews($elem, helper) {
-    const $polls = $('.poll', $elem);
-    if (!$polls.length) { return; }
+    if (!helper) {
+      return;
+    }
 
     const post = helper.getModel();
     api.preventCloak(post.id);
-    const votes = post.get('polls_votes') || {};
+    const votes = post.get("polls_votes") || {};
 
     post.pollsChanged();
 
     const polls = post.get("pollsObject");
-    if (!polls) { return; }
+    if (!polls) {
+      return;
+    }
 
-    const postPollViews = {};
+    _interval = _interval || setInterval(rerender, 30000);
 
     $polls.each((idx, pollElem) => {
-      const $div = $("<div>");
       const $poll = $(pollElem);
-
       const pollName = $poll.data("poll-name");
-      const publicPoll = $poll.data("poll-public");
-      const pollId = `${pollName}-${post.id}`;
+      const poll = polls[pollName];
+      if (poll) {
+        const isMultiple = poll.get("type") === "multiple";
 
-      const pollView = createPollView(
-        helper.container,
-        post,
-        polls[pollName],
-        votes[pollName],
-        publicPoll
-      );
-
-      $poll.replaceWith($div);
-      Em.run.schedule('afterRender', () => pollView.renderer.replaceIn(pollView, $div[0]));
-      postPollViews[pollId] = pollView;
+        const glue = new WidgetGlue("discourse-poll", register, {
+          id: `${pollName}-${post.id}`,
+          post,
+          poll,
+          vote: votes[pollName] || [],
+          isMultiple
+        });
+        glue.appendTo(pollElem);
+        _glued.push(glue);
+      }
     });
+  }
 
-    _pollViews = postPollViews;
+  function cleanUpPolls() {
+    if (_interval) {
+      clearInterval(_interval);
+      _interval = null;
+    }
+
+    _glued.forEach(g => g.cleanUp());
+    _glued = [];
   }
 
   api.includePostAttributes("polls", "polls_votes");
-  api.decorateCooked(createPollViews, { onlyStream: true });
-  api.cleanupStream(cleanUpPollViews);
+  api.decorateCooked(attachPolls, { onlyStream: true });
+  api.cleanupStream(cleanUpPolls);
 }
 
 export default {
   name: "extend-for-poll",
 
   initialize() {
-    withPluginApi('0.1', initializePolls);
+    withPluginApi("0.8.7", initializePolls);
   }
 };

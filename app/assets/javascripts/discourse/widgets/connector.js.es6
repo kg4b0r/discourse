@@ -1,5 +1,6 @@
-export default class Connector {
+import deprecated from "discourse-common/lib/deprecated";
 
+export default class Connector {
   constructor(widget, opts) {
     this.widget = widget;
     this.opts = opts;
@@ -11,29 +12,59 @@ export default class Connector {
 
     const { opts, widget } = this;
     Ember.run.next(() => {
-
       const mounted = widget._findView();
 
-      let context;
-      if (opts.context === 'model') {
-        const model = widget.findAncestorModel();
-        context = model;
+      if (opts.templateName) {
+        deprecated(
+          `Using a 'templateName' for a connector is deprecated. Use 'component' instead [${
+            opts.templateName
+          }]`
+        );
       }
 
-      const view = Ember.View.create({
-        container: widget.container,
-        templateName: opts.templateName,
-        context
-      });
-      mounted._connected.push(view);
+      const container = Ember.getOwner
+        ? Ember.getOwner(mounted)
+        : mounted.container;
 
-      view.renderer.replaceIn(view, $elem[0]);
+      let view;
+
+      if (opts.component) {
+        const connector = widget.register.lookupFactory(
+          "component:connector-container"
+        );
+        view = connector.create({
+          layoutName: `components/${opts.component}`,
+          model: widget.findAncestorModel()
+        });
+      }
+
+      if (opts.templateName) {
+        let context;
+        if (opts.context === "model") {
+          const model = widget.findAncestorModel();
+          context = model;
+        }
+
+        view = Ember.View.create({
+          container: container || widget.register,
+          templateName: opts.templateName,
+          context
+        });
+      }
+
+      if (view) {
+        if (Ember.setOwner) {
+          Ember.setOwner(view, Ember.getOwner(mounted));
+        }
+        mounted._connected.push(view);
+        view.renderer.appendTo(view, $elem[0]);
+      }
     });
 
     return elem;
   }
 
-  update() { }
+  update() {}
 }
 
-Connector.prototype.type = 'Widget';
+Connector.prototype.type = "Widget";

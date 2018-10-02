@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require 'current_user'
 require 'canonical_url'
 require_dependency 'guardian'
@@ -7,7 +8,7 @@ require_dependency 'configurable_urls'
 require_dependency 'mobile_detection'
 require_dependency 'category_badge'
 require_dependency 'global_path'
-require_dependency 'canonical_url'
+require_dependency 'emoji'
 
 module ApplicationHelper
   include CurrentUser
@@ -15,7 +16,11 @@ module ApplicationHelper
   include ConfigurableUrls
   include GlobalPath
 
-  def google_universal_analytics_json(ua_domain_name=nil)
+  def self.extra_body_classes
+    @extra_body_classes ||= Set.new
+  end
+
+  def google_universal_analytics_json(ua_domain_name = nil)
     result = {}
     if ua_domain_name
       result[:cookieDomain] = ua_domain_name.gsub(/^http(s)?:\/\//, '')
@@ -23,7 +28,10 @@ module ApplicationHelper
     if current_user.present?
       result[:userId] = current_user.id
     end
-    result.to_json.html_safe
+    if SiteSetting.ga_universal_auto_link_domains.present?
+      result[:allowLinker] = true
+    end
+    result.to_json
   end
 
   def ga_universal_json
@@ -45,15 +53,44 @@ module ApplicationHelper
     end
   end
 
-  def script(*args)
-    if SiteSetting.enable_cdn_js_debugging && GlobalSetting.cdn_url
-      tags = javascript_include_tag(*args, "crossorigin" => "anonymous")
-      tags.gsub!("/assets/", "/cdn_asset/#{Discourse.current_hostname.tr(".","_")}/")
-      tags.gsub!(".js\"", ".js?v=1&origin=#{CGI.escape request.base_url}\"")
-      tags.html_safe
-    else
-      javascript_include_tag(*args)
+  def is_brotli_req?
+    ENV["COMPRESS_BROTLI"] == "1" &&
+    request.env["HTTP_ACCEPT_ENCODING"] =~ /br/
+  end
+
+  def preload_script(script)
+    path = asset_path("#{script}.js")
+
+    if GlobalSetting.use_s3? && GlobalSetting.s3_cdn_url
+      if GlobalSetting.cdn_url
+        path = path.gsub(GlobalSetting.cdn_url, GlobalSetting.s3_cdn_url)
+      else
+        # we must remove the subfolder path here, assets are uploaded to s3
+        # without it getting involved
+        if ActionController::Base.config.relative_url_root
+          path = path.sub(ActionController::Base.config.relative_url_root, "")
+        end
+
+        path = "#{GlobalSetting.s3_cdn_url}#{path}"
+      end
+
+      if is_brotli_req?
+        path = path.gsub(/\.([^.]+)$/, '.br.\1')
+      end
+
+    elsif GlobalSetting.cdn_url&.start_with?("https") && is_brotli_req?
+      path = path.gsub("#{GlobalSetting.cdn_url}/assets/", "#{GlobalSetting.cdn_url}/brotli_asset/")
     end
+
+    if Rails.env == "development"
+      if !path.include?("?")
+        # cache breaker for mobile iOS
+        path = path + "?#{Time.now.to_f}"
+      end
+    end
+
+"<link rel='preload' href='#{path}' as='script'/>
+<script src='#{path}'></script>".html_safe
   end
 
   def discourse_csrf_tags
@@ -70,9 +107,17 @@ module ApplicationHelper
   end
 
   def body_classes
+    result = ApplicationHelper.extra_body_classes.to_a
+
     if @category && @category.url.present?
-      "category-#{@category.url.sub(/^\/c\//, '').gsub(/\//, '-')}"
+      result << "category-#{@category.url.sub(/^\/c\//, '').gsub(/\//, '-')}"
     end
+
+    if current_user.present? && primary_group_name = current_user.primary_group&.name
+      result << "primary-group-#{primary_group_name.downcase}"
+    end
+
+    result.join(' ')
   end
 
   def rtl_class
@@ -84,15 +129,14 @@ module ApplicationHelper
       javascript = javascript.scrub
       javascript.gsub!(/\342\200\250/u, '&#x2028;')
       javascript.gsub!(/(<\/)/u, '\u003C/')
-      javascript.html_safe
+      javascript
     else
       ''
     end
   end
 
   def format_topic_title(title)
-    PrettyText.unescape_emoji(title)
-    strip_tags(title)
+    PrettyText.unescape_emoji strip_tags(title)
   end
 
   def with_format(format, &block)
@@ -105,6 +149,14 @@ module ApplicationHelper
 
   def age_words(secs)
     AgeWords.age_words(secs)
+  end
+
+  def short_date(dt)
+    if dt.year == Time.now.year
+      I18n.l(dt, format: :short_no_year)
+    else
+      I18n.l(dt, format: :date_only)
+    end
   end
 
   def guardian
@@ -128,44 +180,57 @@ module ApplicationHelper
   end
 
   def rtl?
-    ["ar", "fa_IR", "he"].include? I18n.locale.to_s
+    ["ar", "ur", "fa_IR", "he"].include? I18n.locale.to_s
   end
 
-  def user_locale
-    locale = current_user.locale if current_user && SiteSetting.allow_user_locale
-    # changing back to default shoves a blank string there
-    locale.present? ? locale : SiteSetting.default_locale
+  def html_lang
+    SiteSetting.default_locale.sub("_", "-")
   end
 
   # Creates open graph and twitter card meta data
-  def crawlable_meta_data(opts=nil)
+  def crawlable_meta_data(opts = nil)
     opts ||= {}
     opts[:url] ||= "#{Discourse.base_url_no_prefix}#{request.fullpath}"
 
-    if opts[:image].blank? && SiteSetting.default_opengraph_image_url.present?
-      opts[:image] = SiteSetting.default_opengraph_image_url
+    if opts[:image].blank? && (SiteSetting.default_opengraph_image_url.present? || SiteSetting.twitter_summary_large_image_url.present?)
+      opts[:twitter_summary_large_image] = SiteSetting.twitter_summary_large_image_url if SiteSetting.twitter_summary_large_image_url.present?
+      opts[:image] = SiteSetting.default_opengraph_image_url.present? ? SiteSetting.default_opengraph_image_url : SiteSetting.twitter_summary_large_image_url
     elsif opts[:image].blank? && SiteSetting.apple_touch_icon_url.present?
       opts[:image] = SiteSetting.apple_touch_icon_url
     end
 
     # Use the correct scheme for open graph image
-    if opts[:image].present? && opts[:image].start_with?("//")
-      uri = URI(Discourse.base_url)
-      opts[:image] = "#{uri.scheme}:#{opts[:image]}"
-    elsif opts[:image].present? && opts[:image].start_with?("/uploads/")
-      opts[:image] = "#{Discourse.base_url}#{opts[:image]}"
+    if opts[:image].present?
+      if opts[:image].start_with?("//")
+        uri = URI(Discourse.base_url)
+        opts[:image] = "#{uri.scheme}:#{opts[:image]}"
+      elsif opts[:image].start_with?("/uploads/")
+        opts[:image] = "#{Discourse.base_url}#{opts[:image]}"
+      elsif GlobalSetting.relative_url_root && opts[:image].start_with?(GlobalSetting.relative_url_root)
+        opts[:image] = "#{Discourse.base_url_no_prefix}#{opts[:image]}"
+      end
     end
 
-    # Add opengraph tags
+    # Add opengraph & twitter tags
     result = []
     result << tag(:meta, property: 'og:site_name', content: SiteSetting.title)
-    result << tag(:meta, name: 'twitter:card', content: "summary")
 
-    [:url, :title, :description, :image].each do |property|
+    if opts[:twitter_summary_large_image].present?
+      result << tag(:meta, name: 'twitter:card', content: "summary_large_image")
+      result << tag(:meta, name: "twitter:image", content: opts[:twitter_summary_large_image])
+    elsif opts[:image].present?
+      result << tag(:meta, name: 'twitter:card', content: "summary")
+      result << tag(:meta, name: "twitter:image", content: opts[:image])
+    else
+      result << tag(:meta, name: 'twitter:card', content: "summary")
+    end
+    result << tag(:meta, property: "og:image", content: opts[:image]) if opts[:image].present?
+
+    [:url, :title, :description].each do |property|
       if opts[property].present?
-        escape = (property != :image)
-        result << tag(:meta, { property: "og:#{property}", content: opts[property] }, nil, escape)
-        result << tag(:meta, { name: "twitter:#{property}", content: opts[property] }, nil, escape)
+        content = (property == :url ? opts[property] : gsub_emoji_to_unicode(opts[property]))
+        result << tag(:meta, { property: "og:#{property}", content: content }, nil, true)
+        result << tag(:meta, { name: "twitter:#{property}", content: content }, nil, true)
       end
     end
 
@@ -174,6 +239,14 @@ module ApplicationHelper
       result << tag(:meta, name: 'twitter:data1', value: "#{opts[:read_time]} mins 🕑")
       result << tag(:meta, name: 'twitter:label2', value: I18n.t("likes"))
       result << tag(:meta, name: 'twitter:data2', value: "#{opts[:like_count]} ❤")
+    end
+
+    if opts[:published_time]
+      result << tag(:meta, property: 'article:published_time', content: opts[:published_time])
+    end
+
+    if opts[:ignore_canonical]
+      result << tag(:meta, property: 'og:ignore_canonical', content: true)
     end
 
     result.join("\n")
@@ -193,8 +266,12 @@ module ApplicationHelper
     content_tag(:script, MultiJson.dump(json).html_safe, type: 'application/ld+json'.freeze)
   end
 
+  def gsub_emoji_to_unicode(str)
+    Emoji.gsub_emoji_to_unicode(str)
+  end
+
   def application_logo_url
-    @application_logo_url ||= (mobile_view? && SiteSetting.mobile_logo_url) || SiteSetting.logo_url
+    @application_logo_url ||= (mobile_view? && SiteSetting.mobile_logo_url).presence || SiteSetting.logo_url
   end
 
   def login_path
@@ -202,11 +279,11 @@ module ApplicationHelper
   end
 
   def mobile_view?
-    MobileDetection.resolve_mobile_view!(request.user_agent,params,session)
+    MobileDetection.resolve_mobile_view!(request.user_agent, params, session)
   end
 
   def crawler_layout?
-    controller.try(:use_crawler_layout?)
+    controller&.use_crawler_layout?
   end
 
   def include_crawler_content?
@@ -218,14 +295,32 @@ module ApplicationHelper
   end
 
   def customization_disabled?
-    session[:disable_customization]
+    request.env[ApplicationController::NO_CUSTOM]
+  end
+
+  def allow_plugins?
+    !request.env[ApplicationController::NO_PLUGINS]
+  end
+
+  def allow_third_party_plugins?
+    allow_plugins? && !request.env[ApplicationController::ONLY_OFFICIAL]
+  end
+
+  def normalized_safe_mode
+    safe_mode = []
+
+    safe_mode << ApplicationController::NO_CUSTOM if customization_disabled?
+    safe_mode << ApplicationController::NO_PLUGINS if !allow_plugins?
+    safe_mode << ApplicationController::ONLY_OFFICIAL if !allow_third_party_plugins?
+
+    safe_mode.join(",")
   end
 
   def loading_admin?
     controller.class.name.split("::").first == "Admin"
   end
 
-  def category_badge(category, opts=nil)
+  def category_badge(category, opts = nil)
     CategoryBadge.html_for(category, opts).html_safe
   end
 
@@ -239,12 +334,106 @@ module ApplicationHelper
     return "" if Rails.env.test?
 
     matcher = Regexp.new("/connectors/#{name}/.*\.html\.erb$")
-    erbs = ApplicationHelper.all_connectors.select {|c| c =~ matcher }
+    erbs = ApplicationHelper.all_connectors.select { |c| c =~ matcher }
     return "" if erbs.blank?
 
-    result = ""
-    erbs.each {|erb| result << render(file: erb) }
+    result = +""
+    erbs.each { |erb| result << render(file: erb) }
     result.html_safe
   end
 
+  def topic_featured_link_domain(link)
+    begin
+      uri = URI.encode(link)
+      uri = URI.parse(uri)
+      uri = URI.parse("http://#{uri}") if uri.scheme.nil?
+      host = uri.host.downcase
+      host.start_with?('www.') ? host[4..-1] : host
+    rescue
+      ''
+    end
+  end
+
+  def theme_ids
+    if customization_disabled?
+      nil
+    else
+      request.env[:resolved_theme_ids]
+    end
+  end
+
+  def scheme_id
+    return if theme_ids.blank?
+    theme = Theme.find_by(id: theme_ids.first)
+    theme&.color_scheme_id
+  end
+
+  def current_homepage
+    current_user&.user_option&.homepage || SiteSetting.anonymous_homepage
+  end
+
+  def build_plugin_html(name)
+    return "" unless allow_plugins?
+    DiscoursePluginRegistry.build_html(name, controller) || ""
+  end
+
+  # If there is plugin HTML return that, otherwise yield to the template
+  def replace_plugin_html(name)
+    if (html = build_plugin_html(name)).present?
+      html
+    else
+      yield
+      nil
+    end
+  end
+
+  def theme_lookup(name)
+    lookup = Theme.lookup_field(theme_ids, mobile_view? ? :mobile : :desktop, name)
+    lookup.html_safe if lookup
+  end
+
+  def discourse_stylesheet_link_tag(name, opts = {})
+    if opts.key?(:theme_ids)
+      ids = opts[:theme_ids] unless customization_disabled?
+    else
+      ids = theme_ids
+    end
+
+    Stylesheet::Manager.stylesheet_link_tag(name, 'all', ids)
+  end
+
+  def preloaded_json
+    return '{}' if @preloaded.blank?
+    @preloaded.transform_values { |value| escape_unicode(value) }.to_json
+  end
+
+  def client_side_setup_data
+    service_worker_url = Rails.env.development? ? 'service-worker.js' : Rails.application.assets_manifest.assets['service-worker.js']
+    current_hostname_without_port = RailsMultisite::ConnectionManagement.current_hostname.sub(/:[\d]*$/, '')
+
+    setup_data = {
+      cdn: Rails.configuration.action_controller.asset_host,
+      base_url: current_hostname_without_port,
+      base_uri: Discourse::base_uri,
+      environment: Rails.env,
+      letter_avatar_version: LetterAvatar.version,
+      markdown_it_url: asset_url('markdown-it-bundle.js'),
+      service_worker_url: service_worker_url,
+      default_locale: SiteSetting.default_locale,
+      asset_version: Discourse.assets_digest,
+      disable_custom_css: loading_admin?,
+      highlight_js_path: HighlightJs.path,
+    }
+
+    if guardian.can_enable_safe_mode? && params["safe_mode"]
+      setup_data[:safe_mode] = normalized_safe_mode
+    end
+
+    if SiteSetting.Upload.enable_s3_uploads
+      setup_data[:s3_cdn] = SiteSetting.Upload.s3_cdn_url.presence
+      setup_data[:s3_base_url] = SiteSetting.Upload.s3_base_url
+    end
+
+    setup_data
+  end
 end

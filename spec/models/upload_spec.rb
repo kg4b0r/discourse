@@ -17,6 +17,10 @@ describe Upload do
   let(:image_svg) { file_from_fixtures(image_svg_filename) }
   let(:image_svg_filesize) { File.size(image_svg) }
 
+  let(:huge_image_filename) { "huge.jpg" }
+  let(:huge_image) { file_from_fixtures(huge_image_filename) }
+  let(:huge_image_filesize) { File.size(huge_image) }
+
   let(:attachment_path) { __FILE__ }
   let(:attachment) { File.new(attachment_path) }
   let(:attachment_filename) { File.basename(attachment_path) }
@@ -25,7 +29,7 @@ describe Upload do
   context ".create_thumbnail!" do
 
     it "does not create a thumbnail when disabled" do
-      SiteSetting.stubs(:create_thumbnails?).returns(false)
+      SiteSetting.create_thumbnails = false
       OptimizedImage.expects(:create_for).never
       upload.create_thumbnail!(100, 100)
     end
@@ -42,104 +46,179 @@ describe Upload do
 
   end
 
-  context "#create_for" do
+  it "can reconstruct dimensions on demand" do
+    upload = UploadCreator.new(huge_image, "image.png").create_for(user_id)
 
-    before do
-      Upload.stubs(:fix_image_orientation)
-      ImageOptim.any_instance.stubs(:optimize_image!)
-    end
+    upload.update_columns(width: nil, height: nil, thumbnail_width: nil, thumbnail_height: nil)
 
-    it "does not create another upload if it already exists" do
-      Upload.expects(:find_by).with(sha1: image_sha1).returns(upload)
-      Upload.expects(:save).never
-      expect(Upload.create_for(user_id, image, image_filename, image_filesize)).to eq(upload)
-    end
+    upload = Upload.find(upload.id)
 
-    it "fix image orientation" do
-      Upload.expects(:fix_image_orientation).with(image.path)
-      Upload.create_for(user_id, image, image_filename, image_filesize)
-    end
+    expect(upload.width).to eq(64250)
+    expect(upload.height).to eq(64250)
 
-    it "computes width & height for images" do
-      ImageSizer.expects(:resize)
-      image.expects(:rewind).times(3)
-      Upload.create_for(user_id, image, image_filename, image_filesize)
-    end
+    upload.update_columns(width: nil, height: nil, thumbnail_width: nil, thumbnail_height: nil)
 
-    it "does not compute width & height for non-image" do
-      FastImage.any_instance.expects(:size).never
-      upload = Upload.create_for(user_id, attachment, attachment_filename, attachment_filesize)
-      expect(upload.errors.size).to be > 0
-    end
+    expect(upload.thumbnail_width).to eq(500)
+    expect(upload.thumbnail_height).to eq(500)
+  end
 
-    it "generates an error when the image is too large" do
-      SiteSetting.stubs(:max_image_size_kb).returns(1)
-      upload = Upload.create_for(user_id, image, image_filename, image_filesize)
-      expect(upload.errors.size).to be > 0
-    end
+  it "extracts file extension" do
+    created_upload = UploadCreator.new(image, image_filename).create_for(user_id)
+    expect(created_upload.extension).to eq("png")
+  end
 
-    it "generates an error when the attachment is too large" do
-      SiteSetting.stubs(:max_attachment_size_kb).returns(1)
-      upload = Upload.create_for(user_id, attachment, attachment_filename, attachment_filesize)
-      expect(upload.errors.size).to be > 0
-    end
-
-    it "saves proper information" do
-      store = {}
-      Discourse.expects(:store).returns(store)
-      store.expects(:store_upload).returns(url)
-
-      upload = Upload.create_for(user_id, image, image_filename, image_filesize)
-
-      expect(upload.user_id).to eq(user_id)
-      expect(upload.original_filename).to eq(image_filename)
-      expect(upload.filesize).to eq(image_filesize)
-      expect(upload.width).to eq(244)
-      expect(upload.height).to eq(66)
-      expect(upload.url).to eq(url)
-    end
-
-    context "when svg is authorized" do
-
-      before { SiteSetting.stubs(:authorized_extensions).returns("svg") }
-
-      it "consider SVG as an image" do
-        store = {}
-        Discourse.expects(:store).returns(store)
-        store.expects(:store_upload).returns(url)
-
-        upload = Upload.create_for(user_id, image_svg, image_svg_filename, image_svg_filesize)
-
-        expect(upload.user_id).to eq(user_id)
-        expect(upload.original_filename).to eq(image_svg_filename)
-        expect(upload.filesize).to eq(image_svg_filesize)
-        expect(upload.width).to eq(100)
-        expect(upload.height).to eq(50)
-        expect(upload.url).to eq(url)
-      end
-
-    end
-
+  it "should create an invalid upload when the filename is blank" do
+    SiteSetting.authorized_extensions = "*"
+    created_upload = UploadCreator.new(attachment, nil).create_for(user_id)
+    expect(created_upload.valid?).to eq(false)
   end
 
   context ".get_from_url" do
+    let(:sha1) { "10f73034616a796dfd70177dc54b6def44c4ba6f" }
+    let(:upload) { Fabricate(:upload, sha1: sha1) }
 
     it "works when the file has been uploaded" do
-      Upload.expects(:find_by).returns(nil).once
-      Upload.get_from_url("/uploads/default/1/10387531.jpg")
+      expect(Upload.get_from_url(upload.url)).to eq(upload)
+    end
+
+    describe 'for an extensionless url' do
+      before do
+        upload.update!(url: upload.url.sub('.png', ''))
+        upload.reload
+      end
+
+      it 'should return the right upload' do
+        expect(Upload.get_from_url(upload.url)).to eq(upload)
+      end
+    end
+
+    describe 'for a url a tree' do
+      before do
+        upload.update!(url:
+          Discourse.store.get_path_for(
+            "original",
+            16001,
+            upload.sha1,
+            ".#{upload.extension}"
+          )
+        )
+      end
+
+      it 'should return the right upload' do
+        expect(Upload.get_from_url(upload.url)).to eq(upload)
+      end
     end
 
     it "works when using a cdn" do
-      Rails.configuration.action_controller.stubs(:asset_host).returns("http://my.cdn.com")
-      Upload.expects(:find_by).with(url: "/uploads/default/1/02395732905.jpg").returns(nil).once
-      Upload.get_from_url("http://my.cdn.com/uploads/default/1/02395732905.jpg")
+      begin
+        original_asset_host = Rails.configuration.action_controller.asset_host
+        Rails.configuration.action_controller.asset_host = 'http://my.cdn.com'
+
+        expect(Upload.get_from_url(
+          URI.join("http://my.cdn.com", upload.url).to_s
+        )).to eq(upload)
+      ensure
+        Rails.configuration.action_controller.asset_host = original_asset_host
+      end
     end
 
+    it "should return the right upload when using the full URL" do
+      expect(Upload.get_from_url(
+        URI.join("http://discourse.some.com:3000/", upload.url).to_s
+      )).to eq(upload)
+    end
+
+    it "doesn't blow up with an invalid URI" do
+      expect { Upload.get_from_url("http://ip:port/index.html") }.not_to raise_error
+      expect { Upload.get_from_url("mailto:admin%40example.com") }.not_to raise_error
+      expect { Upload.get_from_url("mailto:example") }.not_to raise_error
+    end
+
+    describe "s3 store" do
+      let(:upload) { Fabricate(:upload_s3) }
+      let(:path) { upload.url.sub(SiteSetting.Upload.s3_base_url, '') }
+
+      before do
+        SiteSetting.enable_s3_uploads = true
+        SiteSetting.s3_upload_bucket = "s3-upload-bucket"
+        SiteSetting.s3_access_key_id = "some key"
+        SiteSetting.s3_secret_access_key = "some secret key"
+      end
+
+      it "should return the right upload when using base url (not CDN) for s3" do
+        upload
+        expect(Upload.get_from_url(upload.url)).to eq(upload)
+      end
+
+      describe 'when using a cdn' do
+        let(:s3_cdn_url) { 'https://mycdn.slowly.net' }
+
+        before do
+          SiteSetting.s3_cdn_url = s3_cdn_url
+        end
+
+        it "should return the right upload" do
+          upload
+          expect(Upload.get_from_url(URI.join(s3_cdn_url, path).to_s)).to eq(upload)
+        end
+
+        describe 'when upload bucket contains subfolder' do
+          let(:url) { "#{SiteSetting.Upload.absolute_base_url}/path/path2#{path}" }
+
+          before do
+            SiteSetting.s3_upload_bucket = "s3-upload-bucket/path/path2"
+          end
+
+          it "should return the right upload" do
+            upload
+            expect(Upload.get_from_url(URI.join(s3_cdn_url, path).to_s)).to eq(upload)
+          end
+        end
+      end
+
+      it "should return the right upload when using one CDN for both s3 and assets" do
+        begin
+          original_asset_host = Rails.configuration.action_controller.asset_host
+          cdn_url = 'http://my.cdn.com'
+          Rails.configuration.action_controller.asset_host = cdn_url
+          SiteSetting.s3_cdn_url = cdn_url
+          upload
+
+          expect(Upload.get_from_url(
+            URI.join(cdn_url, path).to_s
+          )).to eq(upload)
+        ensure
+          Rails.configuration.action_controller.asset_host = original_asset_host
+        end
+      end
+    end
   end
 
   describe '.generate_digest' do
     it "should return the right digest" do
       expect(Upload.generate_digest(image.path)).to eq('bc975735dfc6409c1c2aa5ebf2239949bcbdbd65')
+    end
+  end
+
+  describe '.short_url' do
+    it "should generate a correct short url" do
+      upload = Upload.new(sha1: 'bda2c513e1da04f7b4e99230851ea2aafeb8cc4e', extension: 'png')
+      expect(upload.short_url).to eq('upload://r3AYqESanERjladb4vBB7VsMBm6.png')
+    end
+  end
+
+  describe '.sha1_from_short_url' do
+    it "should be able to look up sha1" do
+      sha1 = 'bda2c513e1da04f7b4e99230851ea2aafeb8cc4e'
+
+      expect(Upload.sha1_from_short_url('upload://r3AYqESanERjladb4vBB7VsMBm6.png')).to eq(sha1)
+      expect(Upload.sha1_from_short_url('upload://r3AYqESanERjladb4vBB7VsMBm6')).to eq(sha1)
+      expect(Upload.sha1_from_short_url('r3AYqESanERjladb4vBB7VsMBm6')).to eq(sha1)
+    end
+
+    it "should be able to look up sha1 even with leading zeros" do
+      sha1 = '0000c513e1da04f7b4e99230851ea2aafeb8cc4e'
+      expect(Upload.sha1_from_short_url('upload://1Eg9p8rrCURq4T3a6iJUk0ri6.png')).to eq(sha1)
     end
   end
 

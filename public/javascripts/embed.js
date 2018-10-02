@@ -4,13 +4,17 @@
   var comments = document.getElementById('discourse-comments');
   var iframe = document.createElement('iframe');
 
-  ['discourseUrl', 'discourseEmbedUrl', 'discourseUserName'].forEach(function(i) {
+  ['discourseUrl', 'discourseEmbedUrl', 'discourseUserName', 'discourseReferrerPolicy'].forEach(function(i) {
     if (window[i]) { DE[i] = DE[i] || window[i]; }
   });
 
   var queryParams = {};
 
   if (DE.discourseEmbedUrl) {
+    if (DE.discourseEmbedUrl.indexOf('/') === 0) {
+      console.error("discourseEmbedUrl must be a full URL, not a relative path");
+    }
+
     queryParams.embed_url = encodeURIComponent(DE.discourseEmbedUrl);
   }
 
@@ -40,6 +44,10 @@
   iframe.width = "100%";
   iframe.frameBorder = "0";
   iframe.scrolling = "no";
+  if (DE.discourseReferrerPolicy) {
+    // See https://www.w3.org/TR/html5/semantics-embedded-content.html#the-iframe-element
+    iframe.referrerPolicy = DE.discourseReferrerPolicy;
+  }
   comments.appendChild(iframe);
 
   // Thanks http://amendsoft-javascript.blogspot.ca/2010/04/find-x-and-y-coordinate-of-html-control.html
@@ -64,7 +72,7 @@
   }
 
   function normalizeUrl(url) {
-    return url.replace(/^https?(\:\/\/)?/, '');
+    return url.toLowerCase().replace(/^https?(\:\/\/)?/, '');
   }
 
   function postMessageReceived(e) {

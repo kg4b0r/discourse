@@ -1,17 +1,46 @@
-moduleForComponent("text-field", {needs: []});
+import componentTest from "helpers/component-test";
 
-test("renders correctly with no properties set", function() {
-  var component = this.subject();
-  equal(component.get('type'), "text");
+moduleForComponent("text-field", { integration: true });
+
+componentTest("renders correctly with no properties set", {
+  template: `{{text-field}}`,
+
+  test(assert) {
+    assert.ok(this.$("input[type=text]").length);
+  }
 });
 
-test("support a placeholder", function() {
-  sandbox.stub(I18n, "t").returnsArg(0);
+componentTest("support a placeholder", {
+  template: `{{text-field placeholderKey="placeholder.i18n.key"}}`,
 
-  var component = this.subject({
-    placeholderKey: "placeholder.i18n.key"
-  });
+  beforeEach() {
+    sandbox.stub(I18n, "t").returnsArg(0);
+  },
 
-  equal(component.get('type'), "text");
-  equal(component.get('placeholder'), "placeholder.i18n.key");
+  test(assert) {
+    assert.ok(this.$("input[type=text]").length);
+    assert.equal(this.$("input").prop("placeholder"), "placeholder.i18n.key");
+  }
+});
+
+componentTest("sets the dir attribute to ltr for Hebrew text", {
+  template: `{{text-field value='זהו שם עברי עם מקום עברי'}}`,
+  beforeEach() {
+    this.siteSettings.support_mixed_text_direction = true;
+  },
+
+  test(assert) {
+    assert.equal(this.$("input").attr("dir"), "rtl");
+  }
+});
+
+componentTest("sets the dir attribute to ltr for English text", {
+  template: `{{text-field value='This is a ltr title'}}`,
+  beforeEach() {
+    this.siteSettings.support_mixed_text_direction = true;
+  },
+
+  test(assert) {
+    assert.equal(this.$("input").attr("dir"), "ltr");
+  }
 });

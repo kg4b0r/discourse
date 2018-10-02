@@ -2,7 +2,7 @@ require 'rails_helper'
 
 describe Notification do
   before do
-    ActiveRecord::Base.observers.enable :all
+    NotificationEmailer.enable
   end
 
   it { is_expected.to validate_presence_of :notification_type }
@@ -30,7 +30,7 @@ describe Notification do
   describe 'post' do
     let(:topic) { Fabricate(:topic) }
     let(:post_args) do
-      {user: topic.user, topic: topic}
+      { user: topic.user, topic: topic }
     end
 
     let(:coding_horror) { Fabricate(:coding_horror) }
@@ -43,7 +43,6 @@ describe Notification do
       let(:post) {
         process_alerts(Fabricate(:post, post_args.merge(raw: "Hello @CodingHorror")))
       }
-
 
       it 'notifies the poster on reply' do
         expect {
@@ -128,30 +127,13 @@ describe Notification do
     end
 
     context 'destroy' do
-
       let!(:notification) { Fabricate(:notification) }
 
       it 'updates the notification count on destroy' do
         Notification.any_instance.expects(:refresh_notification_count).returns(nil)
-        notification.destroy
+        notification.destroy!
       end
 
-    end
-  end
-
-  describe '@mention' do
-
-    it "calls email_user_mentioned on creating a notification" do
-      UserEmailObserver.any_instance.expects(:after_commit).with(instance_of(Notification))
-      Fabricate(:notification)
-    end
-
-  end
-
-  describe '@mention' do
-    it "calls email_user_quoted on creating a quote notification" do
-      UserEmailObserver.any_instance.expects(:after_commit).with(instance_of(Notification))
-      Fabricate(:quote_notification)
     end
   end
 
@@ -159,7 +141,7 @@ describe Notification do
     before do
       @topic = Fabricate(:private_message_topic)
       @post = Fabricate(:post, topic: @topic, user: @topic.user)
-      @target = @post.topic.topic_allowed_users.reject{|a| a.user_id == @post.user_id}[0].user
+      @target = @post.topic.topic_allowed_users.reject { |a| a.user_id == @post.user_id }[0].user
 
       TopicUser.change(@target.id, @topic.id, notification_level: TopicUser.notification_levels[:watching])
 
@@ -216,12 +198,11 @@ describe Notification do
                            notification_type: Notification.types[:private_message])
 
       other = Notification.create!(read: false,
-                           user_id: user.id,
-                           topic_id: t.id,
-                           post_number: 1,
-                           data: '{}',
-                           notification_type: Notification.types[:mentioned])
-
+                                   user_id: user.id,
+                                   topic_id: t.id,
+                                   post_number: 1,
+                                   data: '{}',
+                                   notification_type: Notification.types[:mentioned])
 
       user.saw_notification_id(other.id)
       user.reload
@@ -241,15 +222,15 @@ describe Notification do
       end
       Notification.create!(read: true, user_id: user.id, topic_id: 2, post_number: 4, data: '{}', notification_type: 1)
 
-      expect { Notification.mark_posts_read(user,2,[1,2,3,4]) }.to change { Notification.where(read: true).count }.by(3)
+      expect { Notification.mark_posts_read(user, 2, [1, 2, 3, 4]) }.to change { Notification.where(read: true).count }.by(3)
     end
   end
-
 
   describe 'ensure consistency' do
     it 'deletes notifications if post is missing or deleted' do
 
-      ActiveRecord::Base.observers.disable :all
+      NotificationEmailer.disable
+
       p = Fabricate(:post)
       p2 = Fabricate(:post)
 
@@ -274,8 +255,8 @@ end
 # pulling this out cause I don't want an observer
 describe Notification do
   describe '#recent_report' do
-    let(:user){ Fabricate(:user) }
-    let(:post){ Fabricate(:post) }
+    let(:user) { Fabricate(:user) }
+    let(:post) { Fabricate(:post) }
 
     def fab(type, read)
       @i ||= 0
@@ -312,7 +293,7 @@ describe Notification do
       # bumps unread pms to front of list
 
       notifications = Notification.recent_report(user, 3)
-      expect(notifications.map{|n| n.id}).to eq([a.id, d.id, c.id])
+      expect(notifications.map { |n| n.id }).to eq([a.id, d.id, c.id])
 
     end
   end

@@ -8,7 +8,7 @@ end
 #
 #  id               :integer          not null, primary key
 #  user_id          :integer          not null
-#  facebook_user_id :integer          not null
+#  facebook_user_id :bigint(8)        not null
 #  username         :string
 #  first_name       :string
 #  last_name        :string
@@ -18,6 +18,10 @@ end
 #  link             :string
 #  created_at       :datetime         not null
 #  updated_at       :datetime         not null
+#  avatar_url       :string
+#  about_me         :text
+#  location         :string
+#  website          :text
 #
 # Indexes
 #

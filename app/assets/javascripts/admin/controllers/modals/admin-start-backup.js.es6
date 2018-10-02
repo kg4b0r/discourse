@@ -1,32 +1,21 @@
-import ModalFunctionality from 'discourse/mixins/modal-functionality';
-import Backup from 'admin/models/backup';
+import ModalFunctionality from "discourse/mixins/modal-functionality";
 
 export default Ember.Controller.extend(ModalFunctionality, {
-  needs: ["adminBackupsLogs"],
-
-  _startBackup: function (withUploads) {
-    var self = this;
-    Discourse.User.currentProp("hideReadOnlyAlert", true);
-    Backup.start(withUploads).then(function() {
-      self.get("controllers.adminBackupsLogs").clear();
-      self.send("backupStarted");
-    });
-  },
+  adminBackupsLogs: Ember.inject.controller(),
 
   actions: {
-
-    startBackup: function () {
-      this._startBackup();
+    startBackupWithUploads() {
+      this.send("closeModal");
+      this.send("startBackup", true);
     },
 
-    startBackupWithoutUpload: function () {
-      this._startBackup(false);
+    startBackupWithoutUploads() {
+      this.send("closeModal");
+      this.send("startBackup", false);
     },
 
-    cancel: function () {
+    cancel() {
       this.send("closeModal");
     }
-
   }
-
 });

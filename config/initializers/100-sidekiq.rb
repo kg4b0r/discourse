@@ -9,12 +9,41 @@ Sidekiq.configure_server do |config|
 
   config.server_middleware do |chain|
     chain.add Sidekiq::Pausable
-    # ensure statistic middleware is included in case of a fork
-    chain.add Sidekiq::Statistic::Middleware
   end
 end
 
+MiniScheduler.configure do |config|
+
+  config.redis = $redis
+
+  config.job_exception_handler do |ex, context|
+    Discourse.handle_job_exception(ex, context)
+  end
+
+  config.job_ran do |stat|
+    DiscourseEvent.trigger(:scheduled_job_ran, stat)
+  end
+
+  config.before_sidekiq_web_request do
+    RailsMultisite::ConnectionManagement.establish_connection(db: 'default')
+  end
+
+end
+
 if Sidekiq.server?
+
+  module Sidekiq
+    class CLI
+      private
+
+      def print_banner
+        # banner takes up too much space
+      end
+    end
+  end
+
+  # defer queue should simply run in sidekiq
+  Scheduler::Defer.async = false
 
   # warm up AR
   RailsMultisite::ConnectionManagement.each_connection do
@@ -24,21 +53,10 @@ if Sidekiq.server?
   end
 
   Rails.application.config.after_initialize do
-    require 'scheduler/scheduler'
-    manager = Scheduler::Manager.new
-    Scheduler::Manager.discover_schedules.each do |schedule|
-      manager.ensure_schedule!(schedule)
-    end
-    Thread.new do
-      while true
-        begin
-          manager.tick
-        rescue => e
-          # the show must go on
-          Discourse.handle_job_exception(e, {message: "While ticking scheduling manager"})
-        end
-        sleep 1
-      end
+    scheduler_hostname = ENV["UNICORN_SCHEDULER_HOSTNAME"]
+
+    if !scheduler_hostname || scheduler_hostname.split(',').include?(`hostname`.strip)
+      MiniScheduler.start
     end
   end
 end
@@ -49,6 +67,7 @@ class SidekiqLogsterReporter < Sidekiq::ExceptionHandler::Logger
   def call(ex, context = {})
 
     return if Jobs::HandledExceptionWrapper === ex
+    Discourse.reset_active_record_cache_if_needed(ex)
 
     # Pass context to Logster
     fake_env = {}

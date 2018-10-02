@@ -1,11 +1,24 @@
 <td class="title">
   {{#if report.icon}}
-    {{fa-icon report.icon}}
+    {{d-icon report.icon}}
   {{/if}}
   <a href="{{report.reportUrl}}">{{report.title}}</a>
 </td>
-<td class="value">{{report.todayCount}}</td>
-<td class="value {{report.yesterdayTrend}}" title={{report.yesterdayCountTitle}}>{{report.yesterdayCount}} {{fa-icon "caret-up" class="up"}} {{fa-icon "caret-down" class="down"}}</td>
-<td class="value {{report.sevenDayTrend}}" title={{report.sevenDayCountTitle}}>{{report.lastSevenDaysCount}} {{fa-icon "caret-up" class="up"}} {{fa-icon "caret-down" class="down"}}</td>
-<td class="value {{report.thirtyDayTrend}}" title={{report.thirtyDayCountTitle}}>{{report.lastThirtyDaysCount}} {{fa-icon "caret-up" class="up"}} {{fa-icon "caret-down" class="down"}}</td>
-<td class="value">{{report.total}}</td>
+
+<td class="value">{{number report.todayCount}}</td>
+
+<td class="value {{report.yesterdayTrend}}" title={{report.yesterdayCountTitle}}>
+  {{number report.yesterdayCount}} {{d-icon report.yesterdayTrendIcon}}
+</td>
+
+<td class="value {{report.sevenDaysTrend}}" title={{report.sevenDaysCountTitle}}>
+  {{number report.lastSevenDaysCount}} {{d-icon report.sevenDaysTrendIcon}}
+</td>
+
+<td class="value {{report.thirtyDaysTrend}}" title={{report.thirtyDaysCountTitle}}>
+  {{number report.lastThirtyDaysCount}} {{d-icon report.thirtyDaysTrendIcon}}
+</td>
+
+{{#if allTime}}
+  <td class="value">{{number report.total}}</td>
+{{/if}}

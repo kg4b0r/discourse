@@ -1,8 +1,7 @@
 # Speeds up #pluck so its about 2.2x faster, importantly makes pluck avoid creation of a slew
 # of AR objects
-
-require_dependency 'sql_builder'
-
+#
+#
 class ActiveRecord::Relation
 
   # Note: In discourse, the following code is included in lib/sql_builder.rb
@@ -34,53 +33,33 @@ class ActiveRecord::Relation
   # end
 
   class ::ActiveRecord::ConnectionAdapters::PostgreSQLAdapter
-    if Rails.version >= "4.2.0"
-      def select_raw(arel, name = nil, binds = [], &block)
-        arel, binds = binds_from_relation arel, binds
-        sql = to_sql(arel, binds)
-        execute_and_clear(sql, name, binds, &block)
-      end
-    else
-
-      def select_raw(arel, name = nil, binds = [], &block)
-        arel, binds = binds_from_relation arel, binds
-        sql = to_sql(arel, binds)
-
-        result = without_prepared_statement?(binds) ? exec_no_cache(sql, 'SQL', binds) :
-                                                        exec_cache(sql, 'SQL', binds)
-        yield result, nil
-      end
+    def select_raw(arel, name = nil, binds = [], &block)
+      arel = arel_from_relation(arel)
+      sql, binds = to_sql_and_binds(arel, binds)
+      execute_and_clear(sql, name, binds, &block)
     end
   end
 
-  def pluck(*cols)
-
-    conn = ActiveRecord::Base.connection
-    relation = self
-
-    cols.map! do |column_name|
-      if column_name.is_a?(Symbol) && attribute_alias?(column_name)
-        attribute_alias(column_name)
-      else
-        column_name.to_s
-      end
+  def pluck(*column_names)
+    if loaded? && (column_names.map(&:to_s) - @klass.attribute_names - @klass.attribute_aliases.keys).empty?
+      return records.pluck(*column_names)
     end
 
-
-    if has_include?(cols.first)
-      construct_relation_for_association_calculations.pluck(*cols)
+    if has_include?(column_names.first)
+      relation = apply_join_dependency
+      relation.pluck(*column_names)
     else
+      enforce_raw_sql_whitelist(column_names)
       relation = spawn
 
-      relation.select_values = cols.map { |cn|
-        columns_hash.key?(cn) ? arel_table[cn] : cn
+      relation.select_values = column_names.map { |cn|
+        @klass.has_attribute?(cn) || @klass.attribute_alias?(cn) ? arel_attribute(cn) : cn
       }
 
-      conn.select_raw(relation) do |result,_|
-        result.type_map = SqlBuilder.pg_type_map
+      klass.connection.select_raw(relation.arel) do |result, _|
+        result.type_map = DB.type_map
         result.nfields == 1 ? result.column_values(0) : result.values
       end
-
     end
   end
 end

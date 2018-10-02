@@ -1,24 +1,41 @@
 import computed from "ember-addons/ember-computed-decorators";
 import ModalFunctionality from "discourse/mixins/modal-functionality";
-
-import { allowsImages } from 'discourse/lib/utilities';
+import { ajax } from "discourse/lib/ajax";
+import { allowsImages } from "discourse/lib/utilities";
+import { popupAjaxError } from "discourse/lib/ajax-error";
 
 export default Ember.Controller.extend(ModalFunctionality, {
-  @computed("selected", "system_avatar_upload_id", "gravatar_avatar_upload_id", "custom_avatar_upload_id")
+  @computed(
+    "selected",
+    "user.system_avatar_upload_id",
+    "user.gravatar_avatar_upload_id",
+    "user.custom_avatar_upload_id"
+  )
   selectedUploadId(selected, system, gravatar, custom) {
     switch (selected) {
-      case "system": return system;
-      case "gravatar": return gravatar;
-      default: return custom;
+      case "system":
+        return system;
+      case "gravatar":
+        return gravatar;
+      default:
+        return custom;
     }
   },
 
-  @computed("selected", "system_avatar_template", "gravatar_avatar_template", "custom_avatar_template")
+  @computed(
+    "selected",
+    "user.system_avatar_template",
+    "user.gravatar_avatar_template",
+    "user.custom_avatar_template"
+  )
   selectedAvatarTemplate(selected, system, gravatar, custom) {
     switch (selected) {
-      case "system": return system;
-      case "gravatar": return gravatar;
-      default: return custom;
+      case "system":
+        return system;
+      case "gravatar":
+        return gravatar;
+      default:
+        return custom;
     }
   },
 
@@ -28,20 +45,47 @@ export default Ember.Controller.extend(ModalFunctionality, {
   },
 
   actions: {
-    useUploadedAvatar() { this.set("selected", "uploaded"); },
-    useGravatar() { this.set("selected", "gravatar"); },
-    useSystem() { this.set("selected", "system"); },
+    uploadComplete() {
+      this.set("selected", "uploaded");
+    },
 
     refreshGravatar() {
       this.set("gravatarRefreshDisabled", true);
-      return Discourse
-        .ajax(`/user_avatar/${this.get("username")}/refresh_gravatar.json`, { method: "POST" })
-        .then(result => this.setProperties({
-          gravatar_avatar_template: result.gravatar_avatar_template,
-          gravatar_avatar_upload_id: result.gravatar_upload_id,
-        }))
+
+      return ajax(
+        `/user_avatar/${this.get("user.username")}/refresh_gravatar.json`,
+        { method: "POST" }
+      )
+        .then(result => {
+          if (!result.gravatar_upload_id) {
+            this.set("gravatarFailed", true);
+          } else {
+            this.set("gravatarFailed", false);
+
+            this.get("user").setProperties({
+              gravatar_avatar_upload_id: result.gravatar_upload_id,
+              gravatar_avatar_template: result.gravatar_avatar_template
+            });
+          }
+        })
         .finally(() => this.set("gravatarRefreshDisabled", false));
+    },
+
+    selectAvatar(url) {
+      this.get("user")
+        .selectAvatar(url)
+        .then(() => window.location.reload())
+        .catch(popupAjaxError);
+    },
+
+    saveAvatarSelection() {
+      const selectedUploadId = this.get("selectedUploadId");
+      const type = this.get("selected");
+
+      this.get("user")
+        .pickAvatar(selectedUploadId, type)
+        .then(() => window.location.reload())
+        .catch(popupAjaxError);
     }
   }
-
 });
